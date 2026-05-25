@@ -13,7 +13,7 @@ from email.mime.text import MIMEText
 st.set_page_config(page_title="Gestão de Designações e Partes", layout="wide", initial_sidebar_state="expanded")
 
 # --- CONFIGURAÇÃO DE ADMINISTRADOR E E-MAIL ---
-EMAIL_ADMIN = "augustosierra2020@gmail.com"
+EMAIL_ADMIN = "admin@admin.com"
 
 # --- FUNÇÃO DE HORÁRIO (BRASÍLIA) ---
 def get_horario_brasilia():
@@ -28,7 +28,6 @@ def criar_tabelas():
     conn = conectar_db()
     c = conn.cursor()
     
-    # 🔒 GARANTIA DE ISOLAMENTO: Grupos salvos na própria linha do usuário (grupos_json)
     c.execute('''
         CREATE TABLE IF NOT EXISTS usuarios (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -39,7 +38,6 @@ def criar_tabelas():
         )
     ''')
     
-    # 🔒 GARANTIA DE ISOLAMENTO: Todo histórico é carimbado e "amarrado" ao user_id (FOREIGN KEY)
     c.execute('''
         CREATE TABLE IF NOT EXISTS historico (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -80,11 +78,9 @@ def cadastrar_usuario(nome, email, senha):
             if usuario_existente[1].lower() == email.lower():
                 return "email_duplicado"
 
-        # Grupos iniciais que cada novo usuário recebe (cada um ganha sua própria cópia independente)
-        grupos_padrao = json.dumps({
-            "Varões": ["Adriano", "Brayan", "Caio", "Edevaldo", "Jorge", "Pedro", "Rander", "Sergio"],
-            "Irmãs": ["Adriana", "Aline", "Anne", "Cassandra", "Daniela", "Debora", "Estela", "Gabrielly", "Letícia"]
-        })
+        # AGORA COMEÇA VAZIO! Cada usuário terá que criar seus próprios grupos.
+        grupos_padrao = json.dumps({})
+        
         c.execute('INSERT INTO usuarios (nome, email, senha, grupos_json) VALUES (?, ?, ?, ?)', 
                   (nome, email, hash_senha(senha), grupos_padrao))
         conn.commit()
@@ -164,7 +160,6 @@ def atualizar_nome_usuario_admin(user_id, novo_nome):
     conn.commit()
     conn.close()
 
-# 🔒 GARANTIA DE ISOLAMENTO: Grupos salvos EXCLUSIVAMENTE para o ID logado
 def salvar_grupos_db(user_id, grupos_dict):
     conn = conectar_db()
     c = conn.cursor()
@@ -172,7 +167,6 @@ def salvar_grupos_db(user_id, grupos_dict):
     conn.commit()
     conn.close()
 
-# 🔒 GARANTIA DE ISOLAMENTO: Apaga e reescreve histórico EXCLUSIVAMENTE do ID logado
 def salvar_historico_db(user_id, df_historico):
     conn = conectar_db()
     conn.execute('DELETE FROM historico WHERE user_id = ?', (user_id,))
@@ -185,7 +179,6 @@ def salvar_historico_db(user_id, df_historico):
     conn.commit()
     conn.close()
 
-# 🔒 GARANTIA DE ISOLAMENTO: Carrega o histórico EXCLUSIVAMENTE do ID logado
 def carregar_historico_db(user_id):
     conn = conectar_db()
     df = pd.read_sql_query(
@@ -294,12 +287,8 @@ if cookie_user_id is not None and st.session_state.user_id is None and not st.se
         st.session_state.user_id = usuario[0]
         st.session_state.user_nome = usuario[1]
         st.session_state.user_email = usuario[2]
-        
-        # 🔒 GARANTIA DE ISOLAMENTO: Carrega os grupos daquele ID específico
         st.session_state.grupos = json.loads(usuario[3]) if usuario[3] else {}
-        # 🔒 GARANTIA DE ISOLAMENTO: Carrega o histórico daquele ID específico
         st.session_state.historico_definitivo = carregar_historico_db(st.session_state.user_id)
-        
         st.rerun()
 
 # --- TELA DE LOGIN E CADASTRO ---
