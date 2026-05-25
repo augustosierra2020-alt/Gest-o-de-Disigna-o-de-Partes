@@ -13,7 +13,7 @@ from email.mime.text import MIMEText
 st.set_page_config(page_title="Gestão de Designações e Partes", layout="wide", initial_sidebar_state="expanded")
 
 # --- CONFIGURAÇÃO DE ADMINISTRADOR E E-MAIL ---
-EMAIL_ADMIN = "augusto2020@gmail.com"
+EMAIL_ADMIN = "augustosierra2020@gmail.com"
 
 # --- FUNÇÃO DE HORÁRIO (BRASÍLIA) ---
 def get_horario_brasilia():
