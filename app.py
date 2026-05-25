@@ -210,7 +210,7 @@ with aba_grupos:
     if not st.session_state.grupos:
         st.info("Não há grupos disponíveis. Crie um novo grupo acima.")
     else:
-        # Visualização da tabela vinculada ao rádio
+        # Visualização da tabela vinculada ao rádio (Apenas para visualização)
         grupo_visualizar = st.radio("Selecione o grupo para visualizar a lista de integrantes:", list(st.session_state.grupos.keys()), horizontal=True)
         lista_atual = st.session_state.grupos[grupo_visualizar]
         
@@ -222,7 +222,6 @@ with aba_grupos:
         
         with col_adicionar:
             st.markdown("#### ➕ Adicionar novo integrante em:")
-            # Novo selectbox para escolher o destino da adição
             grupo_destino = st.selectbox("Escolha o grupo de destino:", list(st.session_state.grupos.keys()), key="select_add_destino")
             novo_nome = st.text_input("Digite o nome da pessoa para adicionar:", key="input_add_membro")
             
@@ -237,19 +236,32 @@ with aba_grupos:
                     st.rerun()
                     
         with col_remover:
-            st.markdown(f"#### 🗑️ Remover do grupo '{grupo_visualizar}'")
-            if len(lista_atual) > 0:
-                nomes_para_remover = st.multiselect("Selecione as pessoas que deseja remover:", lista_atual, key="select_remove_membro")
+            st.markdown("#### 🗑️ Remover do Grupo:")
+            grupo_origem_remocao = st.selectbox("Escolha o grupo:", list(st.session_state.grupos.keys()), key="select_del_destino")
+            lista_para_remocao = st.session_state.grupos[grupo_origem_remocao]
+            
+            if len(lista_para_remocao) > 0:
+                # Checkbox para selecionar todos
+                selecionar_todos = st.checkbox("Selecionar todos os integrantes", key="chk_sel_all")
+                selecao_padrao = lista_para_remocao if selecionar_todos else []
+                
+                nomes_para_remover = st.multiselect(
+                    "Selecione as pessoas que deseja remover:", 
+                    options=lista_para_remocao, 
+                    default=selecao_padrao,
+                    key="select_remove_membro"
+                )
+                
                 if st.button("Confirmar Remoção", type="primary", use_container_width=True):
                     if nomes_para_remover:
                         for nome in nomes_para_remover:
-                            st.session_state.grupos[grupo_visualizar].remove(nome)
-                        st.success(f"**{len(nomes_para_remover)}** integrante(s) removido(s) do grupo '{grupo_visualizar}'!")
+                            st.session_state.grupos[grupo_origem_remocao].remove(nome)
+                        st.success(f"**{len(nomes_para_remover)}** integrante(s) removido(s) do grupo '{grupo_origem_remocao}'!")
                         st.rerun()
                     else:
                         st.warning("Por favor, selecione pelo menos um nome para remover.")
             else:
-                st.info("Não há integrantes neste grupo para remover.")
+                st.info(f"O grupo '{grupo_origem_remocao}' está vazio.")
 
 # --- RODAPÉ DA PÁGINA RESPONSIVO ---
 st.write("---")
