@@ -6,8 +6,7 @@ import json
 import hashlib
 from streamlit_gsheets import GSheetsConnection
 import extra_streamlit_components as stx
-import smtplib
-from email.mime.text import MIMEText
+import time
 
 # Configuração inicial da página web responsiva
 st.set_page_config(page_title="Gestão de Designações e Partes", layout="wide", initial_sidebar_state="expanded")
@@ -28,6 +27,8 @@ def carregar_aba(aba_nome):
         df = conn_sheets.read(worksheet=aba_nome, ttl=0)
         if df is not None and not df.empty:
             df.columns = df.columns.str.strip().str.lower()
+            # Remove linhas completamente vazias que o Sheets costuma retornar
+            df = df.dropna(how='all')
         else:
             df = pd.DataFrame()
         return df
@@ -39,11 +40,15 @@ def salvar_aba(df, aba_nome):
         import requests
         URL_DO_SCRIPT = st.secrets["connections"]["gsheets"].get("script_url", "")
         if URL_DO_SCRIPT:
-            # Força garantir que o DataFrame seja enviado como registros limpos
             payload = {"aba": aba_nome, "dados": df.to_json(orient="records")}
-            requests.post(URL_DO_SCRIPT, json=payload)
+            response = requests.post(URL_DO_SCRIPT, json=payload, timeout=10)
+            if response.status_code == 200:
+                # Delay de segurança de frações de segundo para o Google consolidar a escrita
+                time.sleep(0.8)
+                return True
     except Exception as e:
         st.error(f"Erro ao salvar na nuvem: {e}")
+    return False
 
 # --- FUNÇÕES DE SEGURANÇA E GERENCIAMENTO DE USUÁRIOS ---
 def hash_senha(senha):
@@ -64,31 +69,36 @@ def cadastrar_usuario(nome, email, senha):
         if not nome_existe.empty:
             return "nome_duplicado"
             
-    # Lógica de ID corrigida e convertida estritamente para numérico para evitar sobreposição
+    # Garantia absoluta de ID sequencial baseado em contagem de registros válidos para evitar sobreposição
     if df_usuarios.empty or "id" not in df_usuarios.columns:
         novo_id = 1
     else:
         try:
-            novo_id = int(pd.to_numeric(df_usuarios["id"]).max()) + 1
+            ids_validos = pd.to_numeric(df_usuarios["id"], errors='coerce').dropna()
+            novo_id = int(ids_validos.max()) + 1 if not ids_validos.empty else len(df_usuarios) + 1
         except:
             novo_id = len(df_usuarios) + 1
     
     novo_registro = pd.DataFrame([{
-        "id": novo_id,
+        "id": int(novo_id),
         "nome": nome.strip(),
         "email": email.strip().lower(),
-        "senha": hash_senha(senha),
+        "senha": hash_senha(senha.strip()),
         "grupos_json": json.dumps({})
     }])
     
     if df_usuarios.empty:
         df_usuarios = novo_registro
     else:
-        # Garante o alinhamento das colunas antes do concat
+        # Garante a ordem e alinhamento exato das colunas de destino
+        colunas_ordem = ["id", "nome", "email", "senha", "grupos_json"]
+        df_usuarios = df_usuarios[colunas_ordem]
+        novo_registro = novo_registro[colunas_ordem]
         df_usuarios = pd.concat([df_usuarios, novo_registro], ignore_index=True)
         
-    salvar_aba(df_usuarios, "usuarios")
-    return "sucesso"
+    if salvar_aba(df_usuarios, "usuarios"):
+        return "sucesso"
+    return "erro_salvar"
 
 def verificar_login(email, senha):
     df_usuarios = carregar_aba("usuarios")
@@ -111,7 +121,7 @@ def buscar_usuario_por_id(user_id):
     df_usuarios = carregar_aba("usuarios")
     if df_usuarios.empty or "id" not in df_usuarios.columns:
         return None
-    user = df_usuarios[pd.to_numeric(df_usuarios["id"]) == int(user_id)]
+    user = df_usuarios[pd.to_numeric(df_usuarios["id"], errors='coerce') == int(user_id)]
     if not user.empty:
         return user.iloc[0].to_dict()
     return None
@@ -129,7 +139,7 @@ def atualizar_senha(email, nova_senha):
         df_usuarios["email"] = df_usuarios["email"].astype(str).str.strip().str.lower()
         idx = df_usuarios[df_usuarios["email"] == email.strip().lower()].index
         if len(idx) > 0:
-            df_usuarios.loc[idx, "senha"] = hash_senha(nova_senha)
+            df_usuarios.loc[idx, "senha"] = hash_senha(nova_senha.strip())
             salvar_aba(df_usuarios, "usuarios")
 
 # --- FUNÇÕES EXCLUSIVAS DO ADMIN (PAINEL GOOGLE SHEETS) ---
@@ -264,7 +274,7 @@ def gerar_escala_sem_repeticao(membros):
     while tentativas < 1000:
         random.shuffle(ajudantes)
         valido = True
-        for p, a in zip(principais,しかった):
+        for p, a in zip(principais, ajudantes):
             if p == a:
                 valido = False
                 break
@@ -350,11 +360,13 @@ if st.session_state.user_id is None:
             if novo_nome and novo_email and nova_senha:
                 resultado = cadastrar_usuario(novo_nome, novo_email, nova_senha)
                 if resultado == "sucesso":
-                    st.success("Conta criada! Faça login na aba ao lado.")
+                    st.success("Conta criada com sucesso! Faça login na aba ao lado.")
                 elif resultado == "email_duplicado":
                     st.error("⚠️ Este email já está cadastrado.")
                 elif resultado == "nome_duplicado":
                     st.error("⚠️ Este nome já está em uso.")
+                else:
+                    st.error("Erro técnico de comunicação com o Google. Tente novamente.")
             else:
                 st.warning("Preencha todos os campos.")
 
@@ -405,7 +417,7 @@ else:
                         if novo_nome_admin.strip():
                             idx = df_usuarios[df_usuarios["Nome"] + " (" + df_usuarios["Email"] + ")" == user_id_editar].index[0]
                             atualizar_nome_usuario_admin(int(df_usuarios.loc[idx, "id"]), novo_nome_admin)
-                            st.success("Nome atualizado!")
+                            st.success("Nome updated!")
                             st.rerun()
                 with col2:
                     st.subheader("🗑️ Remover Usuário")
