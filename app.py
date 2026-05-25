@@ -4,7 +4,7 @@ import random
 from datetime import datetime
 
 # Configuração inicial da página web - layout wide adapta-se dinamicamente ao container do navegador
-st.set_page_config(page_title="Gestão de Pessoas e Tarefas", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Gestão de Designações e Partes", layout="wide", initial_sidebar_state="collapsed")
 
 # --- BANCO DE DADOS EM MEMÓRIA (Session State) ---
 if "grupos" not in st.session_state:
@@ -56,7 +56,7 @@ def gerar_escala_sem_repeticao(membros):
     return pd.DataFrame(escala)
 
 # --- INTERFACE DO USUÁRIO ---
-st.title("👥 Sistema de Gestão de Pessoas e Escala de Tarefas")
+st.title("👥 Sistema Gestão de Designações")
 st.markdown("Gerencie seus grupos, edite datas de trabalho e mantenha o controle total do histórico.")
 
 # Abas da Aplicação - O Streamlit converte automaticamente em menu colapsável ou rolável em telas mobile
