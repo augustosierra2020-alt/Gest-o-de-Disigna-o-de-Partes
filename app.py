@@ -14,7 +14,7 @@ st.set_page_config(page_title="Gestão de Designações e Partes", layout="wide"
 
 # --- CONFIGURAÇÃO DE ADMINISTRADOR E E-MAIL ---
 # Mude para o SEU e-mail real que será o administrador do sistema
-EMAIL_ADMIN = "admin@admin.com"
+EMAIL_ADMIN = "augustosierra2020@gmail.com"
 
 # --- CONEXÃO E CONFIGURAÇÃO DO BANCO DE DADOS (SQLite) ---
 def conectar_db():
@@ -250,9 +250,14 @@ if "email_recuperacao" not in st.session_state:
 if "codigo_validado" not in st.session_state:
     st.session_state.codigo_validado = False
 
+# Trava para evitar o bug do Auto-Login instantâneo após sair
+if "deslogado" not in st.session_state:
+    st.session_state.deslogado = False
+
 # --- LÓGICA DE AUTO-LOGIN ---
 cookie_user_id = cookie_manager.get(cookie="user_id")
-if cookie_user_id is not None and st.session_state.user_id is None:
+# Só realiza o auto-login se a pessoa não tiver acabado de clicar em Sair
+if cookie_user_id is not None and st.session_state.user_id is None and not st.session_state.deslogado:
     usuario = buscar_usuario_por_id(int(cookie_user_id))
     if usuario:
         st.session_state.user_id = usuario[0]
@@ -284,6 +289,7 @@ if st.session_state.user_id is None:
                 st.session_state.user_email = usuario[2]
                 st.session_state.grupos = json.loads(usuario[3]) if usuario[3] else {}
                 st.session_state.historico_definitivo = carregar_historico_db(st.session_state.user_id)
+                st.session_state.deslogado = False # Reseta a trava do auto-login
                 
                 if manter_logado:
                     validade = datetime.now() + timedelta(days=30)
@@ -355,12 +361,15 @@ else:
         st.title(f"Olá, {st.session_state.user_nome} 👋")
         st.write("Seus dados estão protegidos e isolados.")
         
+        # Tratamento de segurança para comparar e-mails ignorando maiúsculas e espaços extras
+        email_atual_limpo = st.session_state.user_email.strip().lower() if st.session_state.user_email else ""
+        email_admin_limpo = EMAIL_ADMIN.strip().lower()
+        
         # Botão Sala do Adm
-        if st.session_state.user_email == EMAIL_ADMIN:
+        if email_atual_limpo == email_admin_limpo:
             st.write("---")
             if st.session_state.view_mode == "app":
                 if st.button("🛠️ Sala do Adm", use_container_width=True, type="primary"):
-                    # Chama o pop-up nativo do Streamlit ao invés de trocar a tela direto
                     pop_up_senha_adm() 
             else:
                 if st.button("🏠 Voltar para o Sistema", use_container_width=True, type="primary"):
@@ -370,8 +379,13 @@ else:
             
         if st.button("🚪 Sair (Logout)", use_container_width=True):
             cookie_manager.delete("user_id")
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
+            # Ativa a trava para impedir o login automático fantasma
+            st.session_state.deslogado = True
+            
+            # Limpa as credenciais da memória
+            st.session_state.user_id = None
+            st.session_state.user_nome = None
+            st.session_state.user_email = None
             st.rerun()
 
     # ========================================================
@@ -415,7 +429,7 @@ else:
                     id_real = int(df_usuarios.loc[idx, "id"])
                     email_excluido = df_usuarios.loc[idx, "Email"]
                     
-                    if email_excluido == EMAIL_ADMIN:
+                    if email_excluido.strip().lower() == email_admin_limpo:
                         st.error("Você não pode excluir o Administrador principal do sistema!")
                     else:
                         deletar_usuario_admin(id_real)
