@@ -24,6 +24,9 @@ conn_sheets = st.connection("gsheets", type=GSheetsConnection)
 
 def carregar_aba(aba_nome):
     try:
+        # Limpa o cache interno do Streamlit para forçar a leitura em tempo real
+        st.cache_data.clear()
+        
         df = conn_sheets.read(worksheet=aba_nome, ttl=0)
         if df is not None and not df.empty:
             # Padroniza os cabeçalhos para evitar falhas de leitura do Pandas
@@ -83,13 +86,20 @@ def cadastrar_usuario(nome, email, senha):
 
 def verificar_login(email, senha):
     df_usuarios = carregar_aba("usuarios")
+    # Verifica se as colunas essenciais realmente existem na tabela carregada
     if df_usuarios.empty or "email" not in df_usuarios.columns or "senha" not in df_usuarios.columns:
         return None
         
+    # Limpa e padroniza os dados vindos da planilha para evitar erros de espaços ou formatos
     df_usuarios["email"] = df_usuarios["email"].astype(str).str.strip().str.lower()
     df_usuarios["senha"] = df_usuarios["senha"].astype(str).str.strip()
     
-    user = df_usuarios[(df_usuarios["email"] == email.strip().lower()) & (df_usuarios["senha"] == hash_senha(senha))]
+    # Compara limpando e padronizando também o que foi digitado pelo usuário na tela
+    user = df_usuarios[
+        (df_usuarios["email"] == email.strip().lower()) & 
+        (df_usuarios["senha"] == hash_senha(senha.strip()))
+    ]
+    
     if not user.empty:
         return user.iloc[0].to_dict()
     return None
@@ -291,7 +301,7 @@ cookie_user_id = cookie_manager.get(cookie="user_id")
 if cookie_user_id is not None and st.session_state.user_id is None and not st.session_state.deslogado:
     usuario = buscar_usuario_por_id(int(cookie_user_id))
     if usuario:
-        st.session_state.user_id = usuario["id"]
+        st.session_state.user_id = int(usuario["id"])
         st.session_state.user_nome = usuario["nome"]
         st.session_state.user_email = usuario["email"]
         st.session_state.grupos = json.loads(usuario["grupos_json"]) if usuario["grupos_json"] else {}
@@ -459,7 +469,7 @@ else:
                     )
                     
                     if st.button("💾 Confirmar e Registrar no Histórico", type="secondary", use_container_width=True):
-                        df_registro = escala_editada.dropna(subset=["Principal", "Ajudante"]).copy()
+                        df_registro = scala_editada.dropna(subset=["Principal", "Ajudante"]).copy()
                         if df_registro.empty: st.warning("A tabela está vazia.")
                         else:
                             df_registro["Grupo"] = grupo_selecionado
@@ -571,4 +581,4 @@ else:
 
         # --- RODAPÉ ---
         st.write("---")
-        st.markdown("""<div style="text-align: center; color: #888888; font-size: 12px; padding: 10px 0px;">Criado e updated por: Sérgio Sierra</div>""", unsafe_allow_html=True)
+        st.markdown("""<div style="text-align: center; color: #888888; font-size: 12px; padding: 10px 0px;">Criado e atualizado por: Sérgio Sierra</div>""", unsafe_allow_html=True)
