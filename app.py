@@ -24,7 +24,11 @@ conn_sheets = st.connection("gsheets", type=GSheetsConnection)
 
 def carregar_aba(aba_nome):
     try:
-        return conn_sheets.read(worksheet=aba_nome, ttl=0)
+        df = conn_sheets.read(worksheet=aba_nome, ttl=0)
+        if df is not None and not df.empty:
+            # Padroniza os cabeçalhos para evitar falhas de leitura do Pandas
+            df.columns = df.columns.str.strip().str.lower()
+        return df
     except Exception:
         return pd.DataFrame()
 
@@ -46,13 +50,17 @@ def cadastrar_usuario(nome, email, senha):
     df_usuarios = carregar_aba("usuarios")
     
     if not df_usuarios.empty and "email" in df_usuarios.columns:
-        email_existe = df_usuarios[df_usuarios["email"].str.lower() == email.lower()]
-        nome_existe = df_usuarios[df_usuarios["nome"].str.lower() == nome.lower()]
+        # Garante a formatação string e remove espaços para comparar de forma segura
+        df_usuarios["email"] = df_usuarios["email"].astype(str).str.strip().str.lower()
+        df_usuarios["nome"] = df_usuarios["nome"].astype(str).str.strip().str.lower()
         
-        if not nome_existe.empty:
-            return "nome_duplicado"
+        email_existe = df_usuarios[df_usuarios["email"] == email.strip().lower()]
+        nome_existe = df_usuarios[df_usuarios["nome"] == nome.strip().lower()]
+        
         if not email_existe.empty:
             return "email_duplicado"
+        if not nome_existe.empty:
+            return "nome_duplicado"
             
     novo_id = 1 if df_usuarios.empty or "id" not in df_usuarios.columns else int(df_usuarios["id"].max()) + 1
     
@@ -64,16 +72,24 @@ def cadastrar_usuario(nome, email, senha):
         "grupos_json": json.dumps({})
     }])
     
-    df_usuarios = pd.concat([df_usuarios, novo_registro], ignore_index=True)
+    # Se o dataframe original estava vazio, garante as colunas corretas
+    if df_usuarios.empty:
+        df_usuarios = novo_registro
+    else:
+        df_usuarios = pd.concat([df_usuarios, novo_registro], ignore_index=True)
+        
     salvar_aba(df_usuarios, "usuarios")
     return "sucesso"
 
 def verificar_login(email, senha):
     df_usuarios = carregar_aba("usuarios")
-    if df_usuarios.empty or "email" not in df_usuarios.columns:
+    if df_usuarios.empty or "email" not in df_usuarios.columns or "senha" not in df_usuarios.columns:
         return None
         
-    user = df_usuarios[(df_usuarios["email"].str.lower() == email.lower()) & (df_usuarios["senha"] == hash_senha(senha))]
+    df_usuarios["email"] = df_usuarios["email"].astype(str).str.strip().str.lower()
+    df_usuarios["senha"] = df_usuarios["senha"].astype(str).str.strip()
+    
+    user = df_usuarios[(df_usuarios["email"] == email.strip().lower()) & (df_usuarios["senha"] == hash_senha(senha))]
     if not user.empty:
         return user.iloc[0].to_dict()
     return None
@@ -91,12 +107,14 @@ def verificar_email_existe(email):
     df_usuarios = carregar_aba("usuarios")
     if df_usuarios.empty or "email" not in df_usuarios.columns:
         return False
-    return not df_usuarios[df_usuarios["email"].str.lower() == email.lower()].empty
+    df_usuarios["email"] = df_usuarios["email"].astype(str).str.strip().str.lower()
+    return not df_usuarios[df_usuarios["email"] == email.strip().lower()].empty
 
 def atualizar_senha(email, nova_senha):
     df_usuarios = carregar_aba("usuarios")
     if not df_usuarios.empty and "email" in df_usuarios.columns:
-        idx = df_usuarios[df_usuarios["email"].str.lower() == email.lower()].index
+        df_usuarios["email"] = df_usuarios["email"].astype(str).str.strip().str.lower()
+        idx = df_usuarios[df_usuarios["email"] == email.strip().lower()].index
         if len(idx) > 0:
             df_usuarios.loc[idx, "senha"] = hash_senha(nova_senha)
             salvar_aba(df_usuarios, "usuarios")
@@ -108,8 +126,11 @@ def listar_todos_usuarios():
         return pd.DataFrame(columns=["id", "Nome", "Email"])
     
     df_exibir = df_usuarios[["id", "nome", "email"]].copy()
+    df_exibir["email"] = df_exibir["email"].astype(str).str.strip()
+    
     # Adiciona a coroa ao Administrador Mestre na exibição da tabela
-    df_exibir.loc[df_exibir["email"].str.lower() == EMAIL_ADMIN.lower(), "nome"] = "👑 " + df_exibir["nome"]
+    is_admin = df_exibir["email"].str.lower() == EMAIL_ADMIN.lower()
+    df_exibir.loc[is_admin, "nome"] = "👑 " + df_exibir.loc[is_admin, "nome"]
     
     return df_exibir.rename(columns={"nome": "Nome", "email": "Email"})
 
@@ -135,7 +156,6 @@ def deletar_usuario_admin(user_id):
     df_historico = carregar_aba("historico")
     
     if not df_usuarios.empty:
-        # Trava reforçada: impede que o registro do admin seja removido do banco de dados
         user_para_deletar = df_usuarios[df_usuarios["id"] == int(user_id)]
         if not user_para_deletar.empty and user_para_deletar.iloc[0]["email"].strip().lower() == EMAIL_ADMIN.lower():
             return False
@@ -294,7 +314,7 @@ if st.session_state.user_id is None:
         if st.button("Entrar", type="primary", use_container_width=True):
             usuario = verificar_login(email_login, senha_login)
             if usuario:
-                st.session_state.user_id = usuario["id"]
+                st.session_state.user_id = int(usuario["id"])
                 st.session_state.user_nome = usuario["nome"]
                 st.session_state.user_email = usuario["email"]
                 st.session_state.grupos = json.loads(usuario["grupos_json"]) if usuario["grupos_json"] else {}
@@ -319,10 +339,10 @@ if st.session_state.user_id is None:
                 resultado = cadastrar_usuario(novo_nome, novo_email, nova_senha)
                 if resultado == "sucesso":
                     st.success("Conta criada! Faça login na aba ao lado.")
-                elif resultado == "nome_duplicado":
-                    st.error("⚠️ Este nome já está em uso.")
                 elif resultado == "email_duplicado":
                     st.error("⚠️ Este email já está cadastrado.")
+                elif resultado == "nome_duplicado":
+                    st.error("⚠️ Este nome já está em uso.")
             else:
                 st.warning("Preencha todos os campos.")
 
@@ -373,7 +393,7 @@ else:
                         if novo_nome_admin.strip():
                             idx = df_usuarios[df_usuarios["Nome"] + " (" + df_usuarios["Email"] + ")" == user_id_editar].index[0]
                             atualizar_nome_usuario_admin(int(df_usuarios.loc[idx, "id"]), novo_nome_admin)
-                            st.success("Nome updated!")
+                            st.success("Nome atualizado!")
                             st.rerun()
                 with col2:
                     st.subheader("🗑️ Remover Usuário")
@@ -383,7 +403,6 @@ else:
                         id_real = int(df_usuarios.loc[idx, "id"])
                         email_real = df_usuarios.loc[idx, "Email"].strip().lower()
                         
-                        # Trava visual na interface para o Administrador mestre
                         if email_real == EMAIL_ADMIN.strip().lower():
                             st.error("❌ Ação Bloqueada! Por segurança, você não pode excluir o Administrador Master.")
                         else:
@@ -392,7 +411,7 @@ else:
                                 st.success("Usuário removido!")
                                 st.rerun()
                             else:
-                                st.error("Erro crítico ao tentar remover o administrador.")
+                                st.error("Erro crítico ao tentar remover.")
             else:
                 st.info("Nenhum usuário cadastrado.")
                 
@@ -552,4 +571,4 @@ else:
 
         # --- RODAPÉ ---
         st.write("---")
-        st.markdown("""<div style="text-align: center; color: #888888; font-size: 12px; padding: 10px 0px;">Criado e atualizado por: Sérgio Sierra</div>""", unsafe_allow_html=True)
+        st.markdown("""<div style="text-align: center; color: #888888; font-size: 12px; padding: 10px 0px;">Criado e updated por: Sérgio Sierra</div>""", unsafe_allow_html=True)
