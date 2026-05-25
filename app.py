@@ -17,7 +17,6 @@ EMAIL_ADMIN = "admin@admin.com"
 
 # --- FUNÇÃO DE HORÁRIO (BRASÍLIA) ---
 def get_horario_brasilia():
-    # Calcula o horário UTC-3 (Brasília) independente de onde o servidor estiver hospedado
     return (datetime.utcnow() - timedelta(hours=3)).strftime("%d/%m/%Y %H:%M:%S")
 
 # --- CONEXÃO E CONFIGURAÇÃO DO BANCO DE DADOS (SQLite) ---
@@ -29,7 +28,7 @@ def criar_tabelas():
     conn = conectar_db()
     c = conn.cursor()
     
-    # Tabela de usuários
+    # 🔒 GARANTIA DE ISOLAMENTO: Grupos salvos na própria linha do usuário (grupos_json)
     c.execute('''
         CREATE TABLE IF NOT EXISTS usuarios (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,7 +39,7 @@ def criar_tabelas():
         )
     ''')
     
-    # Tabela de histórico 
+    # 🔒 GARANTIA DE ISOLAMENTO: Todo histórico é carimbado e "amarrado" ao user_id (FOREIGN KEY)
     c.execute('''
         CREATE TABLE IF NOT EXISTS historico (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,8 +53,6 @@ def criar_tabelas():
         )
     ''')
     
-    # --- MIGRAÇÃO AUTOMÁTICA DE BANCO DE DADOS ---
-    # Verifica se a coluna de 'data_registro' existe. Se não existir (bancos antigos), ele adiciona.
     c.execute("PRAGMA table_info(historico)")
     colunas_historico = [col[1] for col in c.fetchall()]
     if "data_registro" not in colunas_historico:
@@ -83,6 +80,7 @@ def cadastrar_usuario(nome, email, senha):
             if usuario_existente[1].lower() == email.lower():
                 return "email_duplicado"
 
+        # Grupos iniciais que cada novo usuário recebe (cada um ganha sua própria cópia independente)
         grupos_padrao = json.dumps({
             "Varões": ["Adriano", "Brayan", "Caio", "Edevaldo", "Jorge", "Pedro", "Rander", "Sergio"],
             "Irmãs": ["Adriana", "Aline", "Anne", "Cassandra", "Daniela", "Debora", "Estela", "Gabrielly", "Letícia"]
@@ -137,7 +135,6 @@ def listar_todos_usuarios():
 
 def listar_todo_historico_admin():
     conn = conectar_db()
-    # Puxa o histórico de todos os usuários unindo as tabelas
     query = '''
         SELECT u.nome as "Usuário", u.email as "Email",
                h.grupo as "Grupo", h.tarefa as "Tarefa", 
@@ -167,6 +164,7 @@ def atualizar_nome_usuario_admin(user_id, novo_nome):
     conn.commit()
     conn.close()
 
+# 🔒 GARANTIA DE ISOLAMENTO: Grupos salvos EXCLUSIVAMENTE para o ID logado
 def salvar_grupos_db(user_id, grupos_dict):
     conn = conectar_db()
     c = conn.cursor()
@@ -174,12 +172,12 @@ def salvar_grupos_db(user_id, grupos_dict):
     conn.commit()
     conn.close()
 
+# 🔒 GARANTIA DE ISOLAMENTO: Apaga e reescreve histórico EXCLUSIVAMENTE do ID logado
 def salvar_historico_db(user_id, df_historico):
     conn = conectar_db()
     conn.execute('DELETE FROM historico WHERE user_id = ?', (user_id,))
     for index, row in df_historico.iterrows():
-        # Usa .get() para evitar erros em dados antigos que não têm data_registro
-        data_reg = row.get('Data de Registro', 'Sem data')
+        data_reg = row.get('Data de Registro', get_horario_brasilia())
         conn.execute('''
             INSERT INTO historico (user_id, grupo, tarefa, data_trabalho, principal, ajudante, data_registro)
             VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -187,6 +185,7 @@ def salvar_historico_db(user_id, df_historico):
     conn.commit()
     conn.close()
 
+# 🔒 GARANTIA DE ISOLAMENTO: Carrega o histórico EXCLUSIVAMENTE do ID logado
 def carregar_historico_db(user_id):
     conn = conectar_db()
     df = pd.read_sql_query(
@@ -295,8 +294,12 @@ if cookie_user_id is not None and st.session_state.user_id is None and not st.se
         st.session_state.user_id = usuario[0]
         st.session_state.user_nome = usuario[1]
         st.session_state.user_email = usuario[2]
+        
+        # 🔒 GARANTIA DE ISOLAMENTO: Carrega os grupos daquele ID específico
         st.session_state.grupos = json.loads(usuario[3]) if usuario[3] else {}
+        # 🔒 GARANTIA DE ISOLAMENTO: Carrega o histórico daquele ID específico
         st.session_state.historico_definitivo = carregar_historico_db(st.session_state.user_id)
+        
         st.rerun()
 
 # --- TELA DE LOGIN E CADASTRO ---
@@ -396,7 +399,6 @@ else:
         email_atual_limpo = st.session_state.user_email.strip().lower() if st.session_state.user_email else ""
         email_admin_limpo = EMAIL_ADMIN.strip().lower()
         
-        # Botão Sala do Adm
         if email_atual_limpo == email_admin_limpo:
             st.write("---")
             if st.session_state.view_mode == "app":
@@ -426,7 +428,6 @@ else:
     if st.session_state.view_mode == "admin":
         st.title("🛠️ Painel Administrativo")
         
-        # Criação de Abas dentro da Sala do Adm
         aba_admin_usuarios, aba_admin_historico = st.tabs(["👥 Gerenciar Usuários", "🌎 Ver Histórico Global"])
         
         with aba_admin_usuarios:
@@ -481,7 +482,6 @@ else:
             if not df_hist_global.empty:
                 st.dataframe(df_hist_global, use_container_width=True, hide_index=True)
                 
-                # Opção para o adm baixar esse relatorio completo
                 csv_global = df_hist_global.to_csv(index=False).encode('utf-8')
                 st.download_button("📥 Baixar Relatório Global (.csv)", data=csv_global, file_name=f"Auditoria_Geral_{datetime.today().date()}.csv", mime='text/csv')
             else:
@@ -548,7 +548,6 @@ else:
                             df_registro["Tarefa"] = tarefa_nome
                             df_registro["Data de Trabalho"] = pd.to_datetime(df_registro["Data de Trabalho"]).dt.date
                             
-                            # Carimba o exato segundo em que o usuário salvou (em horário de Brasília)
                             df_registro["Data de Registro"] = get_horario_brasilia()
                             
                             df_registro = df_registro[["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante", "Data de Registro"]]
@@ -572,7 +571,6 @@ else:
                 
                 df_exibir = st.session_state.historico_definitivo.sort_values(by="Data de Trabalho", ascending=False).copy()
                 
-                # Ao editar o historico pelo usuario, desabilitamos a edição da coluna 'Data de Registro' por segurança
                 df_editado = st.data_editor(
                     df_exibir,
                     column_config={
