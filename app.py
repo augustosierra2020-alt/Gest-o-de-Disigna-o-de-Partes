@@ -24,13 +24,12 @@ conn_sheets = st.connection("gsheets", type=GSheetsConnection)
 
 def carregar_aba(aba_nome):
     try:
-        # Limpa o cache interno do Streamlit para forçar a leitura em tempo real
         st.cache_data.clear()
-        
         df = conn_sheets.read(worksheet=aba_nome, ttl=0)
         if df is not None and not df.empty:
-            # Padroniza os cabeçalhos para evitar falhas de leitura do Pandas
             df.columns = df.columns.str.strip().str.lower()
+        else:
+            df = pd.DataFrame()
         return df
     except Exception:
         return pd.DataFrame()
@@ -40,6 +39,7 @@ def salvar_aba(df, aba_nome):
         import requests
         URL_DO_SCRIPT = st.secrets["connections"]["gsheets"].get("script_url", "")
         if URL_DO_SCRIPT:
+            # Força garantir que o DataFrame seja enviado como registros limpos
             payload = {"aba": aba_nome, "dados": df.to_json(orient="records")}
             requests.post(URL_DO_SCRIPT, json=payload)
     except Exception as e:
@@ -53,7 +53,6 @@ def cadastrar_usuario(nome, email, senha):
     df_usuarios = carregar_aba("usuarios")
     
     if not df_usuarios.empty and "email" in df_usuarios.columns:
-        # Garante a formatação string e remove espaços para comparar de forma segura
         df_usuarios["email"] = df_usuarios["email"].astype(str).str.strip().str.lower()
         df_usuarios["nome"] = df_usuarios["nome"].astype(str).str.strip().str.lower()
         
@@ -65,7 +64,14 @@ def cadastrar_usuario(nome, email, senha):
         if not nome_existe.empty:
             return "nome_duplicado"
             
-    novo_id = 1 if df_usuarios.empty or "id" not in df_usuarios.columns else int(df_usuarios["id"].max()) + 1
+    # Lógica de ID corrigida e convertida estritamente para numérico para evitar sobreposição
+    if df_usuarios.empty or "id" not in df_usuarios.columns:
+        novo_id = 1
+    else:
+        try:
+            novo_id = int(pd.to_numeric(df_usuarios["id"]).max()) + 1
+        except:
+            novo_id = len(df_usuarios) + 1
     
     novo_registro = pd.DataFrame([{
         "id": novo_id,
@@ -75,10 +81,10 @@ def cadastrar_usuario(nome, email, senha):
         "grupos_json": json.dumps({})
     }])
     
-    # Se o dataframe original estava vazio, garante as colunas corretas
     if df_usuarios.empty:
         df_usuarios = novo_registro
     else:
+        # Garante o alinhamento das colunas antes do concat
         df_usuarios = pd.concat([df_usuarios, novo_registro], ignore_index=True)
         
     salvar_aba(df_usuarios, "usuarios")
@@ -86,15 +92,12 @@ def cadastrar_usuario(nome, email, senha):
 
 def verificar_login(email, senha):
     df_usuarios = carregar_aba("usuarios")
-    # Verifica se as colunas essenciais realmente existem na tabela carregada
     if df_usuarios.empty or "email" not in df_usuarios.columns or "senha" not in df_usuarios.columns:
         return None
         
-    # Limpa e padroniza os dados vindos da planilha para evitar erros de espaços ou formatos
     df_usuarios["email"] = df_usuarios["email"].astype(str).str.strip().str.lower()
     df_usuarios["senha"] = df_usuarios["senha"].astype(str).str.strip()
     
-    # Compara limpando e padronizando também o que foi digitado pelo usuário na tela
     user = df_usuarios[
         (df_usuarios["email"] == email.strip().lower()) & 
         (df_usuarios["senha"] == hash_senha(senha.strip()))
@@ -108,7 +111,7 @@ def buscar_usuario_por_id(user_id):
     df_usuarios = carregar_aba("usuarios")
     if df_usuarios.empty or "id" not in df_usuarios.columns:
         return None
-    user = df_usuarios[df_usuarios["id"] == int(user_id)]
+    user = df_usuarios[pd.to_numeric(df_usuarios["id"]) == int(user_id)]
     if not user.empty:
         return user.iloc[0].to_dict()
     return None
@@ -138,7 +141,6 @@ def listar_todos_usuarios():
     df_exibir = df_usuarios[["id", "nome", "email"]].copy()
     df_exibir["email"] = df_exibir["email"].astype(str).str.strip()
     
-    # Adiciona a coroa ao Administrador Mestre na exibição da tabela
     is_admin = df_exibir["email"].str.lower() == EMAIL_ADMIN.lower()
     df_exibir.loc[is_admin, "nome"] = "👑 " + df_exibir.loc[is_admin, "nome"]
     
@@ -262,7 +264,7 @@ def gerar_escala_sem_repeticao(membros):
     while tentativas < 1000:
         random.shuffle(ajudantes)
         valido = True
-        for p, a in zip(principais, ajudantes):
+        for p, a in zip(principais,しかった):
             if p == a:
                 valido = False
                 break
@@ -469,7 +471,7 @@ else:
                     )
                     
                     if st.button("💾 Confirmar e Registrar no Histórico", type="secondary", use_container_width=True):
-                        df_registro = scala_editada.dropna(subset=["Principal", "Ajudante"]).copy()
+                        df_registro = escala_editada.dropna(subset=["Principal", "Ajudante"]).copy()
                         if df_registro.empty: st.warning("A tabela está vazia.")
                         else:
                             df_registro["Grupo"] = grupo_selecionado
