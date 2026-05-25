@@ -19,26 +19,18 @@ EMAIL_ADMIN = "augustosierra2020@gmail.com"
 def get_horario_brasilia():
     return (datetime.utcnow() - timedelta(hours=3)).strftime("%d/%m/%Y %H:%M:%S")
 
-# --- CONEXÃO COM O GOOGLE SHEETS (MÉTODO DIRETO) ---
-# Substitua o link abaixo pelo link completo da sua planilha
-LINK_DA_PLANILHA = "https://docs.google.com/spreadsheets/d/1z-py9yQJMAwycV0PrmZtloC8Shay6cNwOTMsFOfc8XA/edit?usp=sharing"
+# --- CONEXÃO COM O GOOGLE SHEETS ---
+conn_sheets = st.connection("gsheets", type=GSheetsConnection)
 
 def carregar_aba(aba_nome):
     try:
-        # Transforma o link normal em um link de exportação de dados direto
-        url_csv = LINK_DA_PLANILHA.replace("/edit?usp=sharing", f"/gviz/tq?tqx=out:csv&sheet={aba_nome}")
-        return pd.read_csv(url_csv)
+        return conn_sheets.read(worksheet=aba_nome, ttl=0)
     except Exception:
         return pd.DataFrame()
 
 def salvar_aba(df, aba_nome):
     try:
-        # Como o Google Cloud está bloqueado, usaremos uma alternativa direta de envio 
-        # enviando os comandos formatados ou usando a API simplificada via requests.
-        # Para garantir que você não dependa do console do Google Cloud, 
-        # vamos usar uma biblioteca que contorna isso usando apenas uma macro do Google Apps Script.
         import requests
-        # Vamos configurar a escrita no Passo 3 usando um script de 3 linhas dentro da sua planilha!
         URL_DO_SCRIPT = st.secrets["connections"]["gsheets"].get("script_url", "")
         if URL_DO_SCRIPT:
             payload = {"aba": aba_nome, "dados": df.to_json(orient="records")}
@@ -114,7 +106,12 @@ def listar_todos_usuarios():
     df_usuarios = carregar_aba("usuarios")
     if df_usuarios.empty:
         return pd.DataFrame(columns=["id", "Nome", "Email"])
-    return df_usuarios[["id", "nome", "email"]].rename(columns={"nome": "Nome", "email": "Email"})
+    
+    df_exibir = df_usuarios[["id", "nome", "email"]].copy()
+    # Adiciona a coroa ao Administrador Mestre na exibição da tabela
+    df_exibir.loc[df_exibir["email"].str.lower() == EMAIL_ADMIN.lower(), "nome"] = "👑 " + df_exibir["nome"]
+    
+    return df_exibir.rename(columns={"nome": "Nome", "email": "Email"})
 
 def listar_todo_historico_admin():
     df_historico = carregar_aba("historico")
@@ -138,11 +135,17 @@ def deletar_usuario_admin(user_id):
     df_historico = carregar_aba("historico")
     
     if not df_usuarios.empty:
+        # Trava reforçada: impede que o registro do admin seja removido do banco de dados
+        user_para_deletar = df_usuarios[df_usuarios["id"] == int(user_id)]
+        if not user_para_deletar.empty and user_para_deletar.iloc[0]["email"].strip().lower() == EMAIL_ADMIN.lower():
+            return False
+            
         df_usuarios = df_usuarios[df_usuarios["id"] != int(user_id)]
         salvar_aba(df_usuarios, "usuarios")
     if not df_historico.empty:
         df_historico = df_historico[df_historico["user_id"] != int(user_id)]
         salvar_aba(df_historico, "historico")
+    return True
 
 def atualizar_nome_usuario_admin(user_id, novo_nome):
     df_usuarios = carregar_aba("usuarios")
@@ -163,7 +166,6 @@ def salvar_grupos_db(user_id, grupos_dict):
 def salvar_historico_db(user_id, df_historico_usuario):
     df_global = carregar_aba("historico")
     
-    # Remove o histórico antigo do usuário específico para reescrever o atualizado
     if not df_global.empty and "user_id" in df_global.columns:
         df_global = df_global[df_global["user_id"] != int(user_id)]
         
@@ -191,7 +193,7 @@ def salvar_historico_db(user_id, df_historico_usuario):
 
 def carregar_historico_db(user_id):
     df_global = carregar_aba("historico")
-    if df_global.empty or "user_id" in df_global.columns not in df_global.columns:
+    if df_global.empty or "user_id" not in df_global.columns:
         return pd.DataFrame(columns=["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante", "Data de Registro"])
         
     df_user = df_global[df_global["user_id"] == int(user_id)].copy()
@@ -218,28 +220,7 @@ def pop_up_senha_adm():
         else:
             st.error("Senha incorreta! Acesso negado.")
 
-# --- FUNÇÃO DE RECUPERAÇÃO DE SENHA POR EMAIL ---
-def enviar_codigo_email(destinatario, codigo):
-    EMAIL_REMETENTE = "" 
-    SENHA_APP = "" 
-    try:
-        if EMAIL_REMETENTE and SENHA_APP:
-            msg = MIMEText(f"Seu código de recuperação de senha é: {codigo}")
-            msg['Subject'] = "Recuperação de Senha - Sistema de Designações"
-            msg['From'] = EMAIL_REMETENTE
-            msg['To'] = destinatario
-            with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-                server.login(EMAIL_REMETENTE, SENHA_APP)
-                server.send_message(msg)
-            return True
-        else:
-            st.warning(f"⚠️ **Simulação Ativada**: O código de recuperação enviado para {destinatario} é: **{codigo}**", icon="📧")
-            return True
-    except Exception as e:
-        st.error(f"Erro ao enviar o e-mail: {e}")
-        return False
-
-# --- LÓGICA DE GERAÇÃO ALEATÓRIA ---
+# --- FUNÇÃO DE GERAÇÃO ALEATÓRIA ---
 def gerar_escala_sem_repeticao(membros):
     if len(membros) < 2:
         return None
@@ -248,7 +229,7 @@ def gerar_escala_sem_repeticao(membros):
     ajudantes = membros.copy()
     
     tentativas = 0
-    while tentatives < 1000:
+    while tentativas < 1000:
         random.shuffle(ajudantes)
         valido = True
         for p, a in zip(principais, ajudantes):
@@ -282,12 +263,6 @@ if "view_mode" not in st.session_state:
     st.session_state.view_mode = "app" 
 if "escala_temporaria" not in st.session_state:
     st.session_state.escala_temporaria = None
-if "codigo_gerado" not in st.session_state:
-    st.session_state.codigo_gerado = None
-if "email_recuperacao" not in st.session_state:
-    st.session_state.email_recuperacao = None
-if "codigo_validado" not in st.session_state:
-    st.session_state.codigo_validado = False
 if "deslogado" not in st.session_state:
     st.session_state.deslogado = False
 
@@ -332,40 +307,6 @@ if st.session_state.user_id is None:
                 st.rerun()
             else:
                 st.error("Email ou senha incorretos.")
-
-        st.write("---")
-        with st.expander("Esqueceu sua senha?"):
-            if not st.session_state.codigo_validado:
-                email_rec = st.text_input("Digite o email cadastrado:", key="input_recuperacao")
-                if st.button("Enviar código de confirmação"):
-                    if verificar_email_existe(email_rec):
-                        codigo = str(random.randint(100000, 999999))
-                        st.session_state.codigo_gerado = codigo
-                        st.session_state.email_recuperacao = email_rec
-                        enviar_codigo_email(email_rec, codigo)
-                        st.success("Código enviado!")
-                    else:
-                        st.error("E-mail não encontrado.")
-                
-                if st.session_state.codigo_gerado:
-                    codigo_inserido = st.text_input("Insira o código de 6 dígitos:")
-                    if st.button("Validar Código"):
-                        if codigo_inserido == st.session_state.codigo_gerado:
-                            st.session_state.codigo_validado = True
-                            st.rerun()
-                        else:
-                            st.error("Código incorreto.")
-            else:
-                nova_senha_rec = st.text_input("Digite sua nova senha:", type="password")
-                if st.button("Redefinir Senha", type="primary"):
-                    if nova_senha_rec:
-                        atualizar_senha(st.session_state.email_recuperacao, nova_senha_rec)
-                        st.success("Senha atualizada!")
-                        st.session_state.codigo_gerado = None
-                        st.session_state.email_recuperacao = None
-                        st.session_state.codigo_validado = False
-                    else:
-                        st.warning("A senha não pode estar em branco.")
                 
     with aba_cadastro:
         st.subheader("Novo Cadastro")
@@ -432,7 +373,7 @@ else:
                         if novo_nome_admin.strip():
                             idx = df_usuarios[df_usuarios["Nome"] + " (" + df_usuarios["Email"] + ")" == user_id_editar].index[0]
                             atualizar_nome_usuario_admin(int(df_usuarios.loc[idx, "id"]), novo_nome_admin)
-                            st.success("Nome atualizado!")
+                            st.success("Nome updated!")
                             st.rerun()
                 with col2:
                     st.subheader("🗑️ Remover Usuário")
@@ -440,12 +381,18 @@ else:
                     if st.button("Confirmar Exclusão", type="primary"):
                         idx = df_usuarios[df_usuarios["Nome"] + " (" + df_usuarios["Email"] + ")" == user_id_remover].index[0]
                         id_real = int(df_usuarios.loc[idx, "id"])
-                        if df_usuarios.loc[idx, "Email"].strip().lower() == EMAIL_ADMIN.strip().lower():
-                            st.error("Você não pode excluir o Administrador principal!")
+                        email_real = df_usuarios.loc[idx, "Email"].strip().lower()
+                        
+                        # Trava visual na interface para o Administrador mestre
+                        if email_real == EMAIL_ADMIN.strip().lower():
+                            st.error("❌ Ação Bloqueada! Por segurança, você não pode excluir o Administrador Master.")
                         else:
-                            deletar_usuario_admin(id_real)
-                            st.success("Usuário removido!")
-                            st.rerun()
+                            sucesso = deletar_usuario_admin(id_real)
+                            if sucesso:
+                                st.success("Usuário removido!")
+                                st.rerun()
+                            else:
+                                st.error("Erro crítico ao tentar remover o administrador.")
             else:
                 st.info("Nenhum usuário cadastrado.")
                 
@@ -453,8 +400,6 @@ else:
             df_hist_global = listar_todo_historico_admin()
             if not df_hist_global.empty:
                 st.dataframe(df_hist_global, use_container_width=True, hide_index=True)
-                csv_global = df_hist_global.to_csv(index=False).encode('utf-8')
-                st.download_button("📥 Baixar Relatório Global (.csv)", data=csv_global, file_name=f"Relatorio_Geral_{datetime.today().date()}.csv", mime='text/csv')
             else:
                 st.info("Nenhum histórico salvo na nuvem ainda.")
 
