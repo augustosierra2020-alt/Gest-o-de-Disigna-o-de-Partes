@@ -138,11 +138,7 @@ def gerar_escala_sem_repeticao(membros):
     return pd.DataFrame(escala)
 
 # --- GERENCIAMENTO DE SESSÃO E COOKIES ---
-@st.cache_resource
-def get_cookie_manager():
-    return stx.CookieManager()
-
-cookie_manager = get_cookie_manager()
+cookie_manager = stx.CookieManager(key="gerenciador_cookies")
 
 if "user_id" not in st.session_state:
     st.session_state.user_id = None
