@@ -13,8 +13,12 @@ from email.mime.text import MIMEText
 st.set_page_config(page_title="Gestão de Designações e Partes", layout="wide", initial_sidebar_state="expanded")
 
 # --- CONFIGURAÇÃO DE ADMINISTRADOR E E-MAIL ---
-# Mude para o SEU e-mail real que será o administrador do sistema
-EMAIL_ADMIN = "augustosierra2020@gmail.com"
+EMAIL_ADMIN = "admin@admin.com"
+
+# --- FUNÇÃO DE HORÁRIO (BRASÍLIA) ---
+def get_horario_brasilia():
+    # Calcula o horário UTC-3 (Brasília) independente de onde o servidor estiver hospedado
+    return (datetime.utcnow() - timedelta(hours=3)).strftime("%d/%m/%Y %H:%M:%S")
 
 # --- CONEXÃO E CONFIGURAÇÃO DO BANCO DE DADOS (SQLite) ---
 def conectar_db():
@@ -24,6 +28,8 @@ def conectar_db():
 def criar_tabelas():
     conn = conectar_db()
     c = conn.cursor()
+    
+    # Tabela de usuários
     c.execute('''
         CREATE TABLE IF NOT EXISTS usuarios (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -33,6 +39,8 @@ def criar_tabelas():
             grupos_json TEXT
         )
     ''')
+    
+    # Tabela de histórico 
     c.execute('''
         CREATE TABLE IF NOT EXISTS historico (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -45,6 +53,14 @@ def criar_tabelas():
             FOREIGN KEY(user_id) REFERENCES usuarios(id)
         )
     ''')
+    
+    # --- MIGRAÇÃO AUTOMÁTICA DE BANCO DE DADOS ---
+    # Verifica se a coluna de 'data_registro' existe. Se não existir (bancos antigos), ele adiciona.
+    c.execute("PRAGMA table_info(historico)")
+    colunas_historico = [col[1] for col in c.fetchall()]
+    if "data_registro" not in colunas_historico:
+        c.execute("ALTER TABLE historico ADD COLUMN data_registro TEXT")
+        
     conn.commit()
     conn.close()
 
@@ -119,6 +135,23 @@ def listar_todos_usuarios():
     conn.close()
     return df
 
+def listar_todo_historico_admin():
+    conn = conectar_db()
+    # Puxa o histórico de todos os usuários unindo as tabelas
+    query = '''
+        SELECT u.nome as "Usuário", u.email as "Email",
+               h.grupo as "Grupo", h.tarefa as "Tarefa", 
+               h.data_trabalho as "Data do Evento", 
+               h.principal as "Principal", h.ajudante as "Ajudante", 
+               h.data_registro as "Salvo em (Brasília)"
+        FROM historico h
+        JOIN usuarios u ON h.user_id = u.id
+        ORDER BY h.id DESC
+    '''
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+    return df
+
 def deletar_usuario_admin(user_id):
     conn = conectar_db()
     c = conn.cursor()
@@ -145,17 +178,19 @@ def salvar_historico_db(user_id, df_historico):
     conn = conectar_db()
     conn.execute('DELETE FROM historico WHERE user_id = ?', (user_id,))
     for index, row in df_historico.iterrows():
+        # Usa .get() para evitar erros em dados antigos que não têm data_registro
+        data_reg = row.get('Data de Registro', 'Sem data')
         conn.execute('''
-            INSERT INTO historico (user_id, grupo, tarefa, data_trabalho, principal, ajudante)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (user_id, row['Grupo'], row['Tarefa'], str(row['Data de Trabalho']), row['Principal'], row['Ajudante']))
+            INSERT INTO historico (user_id, grupo, tarefa, data_trabalho, principal, ajudante, data_registro)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (user_id, row['Grupo'], row['Tarefa'], str(row['Data de Trabalho']), row['Principal'], row['Ajudante'], str(data_reg)))
     conn.commit()
     conn.close()
 
 def carregar_historico_db(user_id):
     conn = conectar_db()
     df = pd.read_sql_query(
-        'SELECT grupo as Grupo, tarefa as Tarefa, data_trabalho as "Data de Trabalho", principal as Principal, ajudante as Ajudante FROM historico WHERE user_id = ?', 
+        'SELECT grupo as Grupo, tarefa as Tarefa, data_trabalho as "Data de Trabalho", principal as Principal, ajudante as Ajudante, data_registro as "Data de Registro" FROM historico WHERE user_id = ?', 
         conn,
         params=(user_id,)
     )
@@ -249,14 +284,11 @@ if "email_recuperacao" not in st.session_state:
     st.session_state.email_recuperacao = None
 if "codigo_validado" not in st.session_state:
     st.session_state.codigo_validado = False
-
-# Trava para evitar o bug do Auto-Login instantâneo após sair
 if "deslogado" not in st.session_state:
     st.session_state.deslogado = False
 
 # --- LÓGICA DE AUTO-LOGIN ---
 cookie_user_id = cookie_manager.get(cookie="user_id")
-# Só realiza o auto-login se a pessoa não tiver acabado de clicar em Sair
 if cookie_user_id is not None and st.session_state.user_id is None and not st.session_state.deslogado:
     usuario = buscar_usuario_por_id(int(cookie_user_id))
     if usuario:
@@ -289,7 +321,7 @@ if st.session_state.user_id is None:
                 st.session_state.user_email = usuario[2]
                 st.session_state.grupos = json.loads(usuario[3]) if usuario[3] else {}
                 st.session_state.historico_definitivo = carregar_historico_db(st.session_state.user_id)
-                st.session_state.deslogado = False # Reseta a trava do auto-login
+                st.session_state.deslogado = False 
                 
                 if manter_logado:
                     validade = datetime.now() + timedelta(days=30)
@@ -361,7 +393,6 @@ else:
         st.title(f"Olá, {st.session_state.user_nome} 👋")
         st.write("Seus dados estão protegidos e isolados.")
         
-        # Tratamento de segurança para comparar e-mails ignorando maiúsculas e espaços extras
         email_atual_limpo = st.session_state.user_email.strip().lower() if st.session_state.user_email else ""
         email_admin_limpo = EMAIL_ADMIN.strip().lower()
         
@@ -378,11 +409,12 @@ else:
             st.write("---")
             
         if st.button("🚪 Sair (Logout)", use_container_width=True):
-            cookie_manager.delete("user_id")
-            # Ativa a trava para impedir o login automático fantasma
-            st.session_state.deslogado = True
+            try:
+                cookie_manager.delete("user_id")
+            except KeyError:
+                pass
             
-            # Limpa as credenciais da memória
+            st.session_state.deslogado = True
             st.session_state.user_id = None
             st.session_state.user_nome = None
             st.session_state.user_email = None
@@ -393,50 +425,67 @@ else:
     # ========================================================
     if st.session_state.view_mode == "admin":
         st.title("🛠️ Painel Administrativo")
-        st.markdown("Bem-vindo à área de administração. Aqui você pode gerenciar os usuários do sistema.")
         
-        df_usuarios = listar_todos_usuarios()
+        # Criação de Abas dentro da Sala do Adm
+        aba_admin_usuarios, aba_admin_historico = st.tabs(["👥 Gerenciar Usuários", "🌎 Ver Histórico Global"])
         
-        if not df_usuarios.empty:
-            st.write(f"**Total de usuários cadastrados:** {len(df_usuarios)}")
-            st.dataframe(df_usuarios, use_container_width=True, hide_index=True)
+        with aba_admin_usuarios:
+            st.markdown("Bem-vindo à área de administração. Aqui você pode gerenciar os usuários do sistema.")
+            df_usuarios = listar_todos_usuarios()
             
-            st.write("---")
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.subheader("✏️ Editar Nome de Usuário")
-                user_id_editar = st.selectbox("Selecione o Usuário:", df_usuarios["Nome"] + " (" + df_usuarios["Email"] + ")", key="sel_edit")
-                novo_nome_admin = st.text_input("Novo Nome:")
+            if not df_usuarios.empty:
+                st.write(f"**Total de usuários cadastrados:** {len(df_usuarios)}")
+                st.dataframe(df_usuarios, use_container_width=True, hide_index=True)
                 
-                if st.button("Salvar Alteração"):
-                    if novo_nome_admin.strip():
-                        idx = df_usuarios[df_usuarios["Nome"] + " (" + df_usuarios["Email"] + ")" == user_id_editar].index[0]
-                        id_real = int(df_usuarios.loc[idx, "id"])
-                        atualizar_nome_usuario_admin(id_real, novo_nome_admin)
-                        st.success("Nome atualizado com sucesso!")
-                        st.rerun()
-                    else:
-                        st.warning("Digite um nome válido.")
-
-            with col2:
-                st.subheader("🗑️ Remover Usuário")
-                user_id_remover = st.selectbox("Selecione o Usuário a ser apagado:", df_usuarios["Nome"] + " (" + df_usuarios["Email"] + ")", key="sel_del")
+                st.write("---")
+                col1, col2 = st.columns(2)
                 
-                st.warning("⚠️ Atenção: Isso apagará o usuário e todo o histórico dele de forma permanente.")
-                if st.button("Confirmar Exclusão", type="primary"):
-                    idx = df_usuarios[df_usuarios["Nome"] + " (" + df_usuarios["Email"] + ")" == user_id_remover].index[0]
-                    id_real = int(df_usuarios.loc[idx, "id"])
-                    email_excluido = df_usuarios.loc[idx, "Email"]
+                with col1:
+                    st.subheader("✏️ Editar Nome de Usuário")
+                    user_id_editar = st.selectbox("Selecione o Usuário:", df_usuarios["Nome"] + " (" + df_usuarios["Email"] + ")", key="sel_edit")
+                    novo_nome_admin = st.text_input("Novo Nome:")
                     
-                    if email_excluido.strip().lower() == email_admin_limpo:
-                        st.error("Você não pode excluir o Administrador principal do sistema!")
-                    else:
-                        deletar_usuario_admin(id_real)
-                        st.success("Usuário removido com sucesso!")
-                        st.rerun()
-        else:
-            st.info("Nenhum usuário encontrado.")
+                    if st.button("Salvar Alteração"):
+                        if novo_nome_admin.strip():
+                            idx = df_usuarios[df_usuarios["Nome"] + " (" + df_usuarios["Email"] + ")" == user_id_editar].index[0]
+                            id_real = int(df_usuarios.loc[idx, "id"])
+                            atualizar_nome_usuario_admin(id_real, novo_nome_admin)
+                            st.success("Nome atualizado com sucesso!")
+                            st.rerun()
+                        else:
+                            st.warning("Digite um nome válido.")
+
+                with col2:
+                    st.subheader("🗑️ Remover Usuário")
+                    user_id_remover = st.selectbox("Selecione o Usuário a ser apagado:", df_usuarios["Nome"] + " (" + df_usuarios["Email"] + ")", key="sel_del")
+                    
+                    st.warning("⚠️ Atenção: Isso apagará o usuário e todo o histórico dele de forma permanente.")
+                    if st.button("Confirmar Exclusão", type="primary"):
+                        idx = df_usuarios[df_usuarios["Nome"] + " (" + df_usuarios["Email"] + ")" == user_id_remover].index[0]
+                        id_real = int(df_usuarios.loc[idx, "id"])
+                        email_excluido = df_usuarios.loc[idx, "Email"]
+                        
+                        if email_excluido.strip().lower() == email_admin_limpo:
+                            st.error("Você não pode excluir o Administrador principal do sistema!")
+                        else:
+                            deletar_usuario_admin(id_real)
+                            st.success("Usuário removido com sucesso!")
+                            st.rerun()
+            else:
+                st.info("Nenhum usuário encontrado.")
+                
+        with aba_admin_historico:
+            st.markdown("Acompanhe aqui tudo o que foi salvo por cada usuário do sistema (Horário de Brasília).")
+            df_hist_global = listar_todo_historico_admin()
+            
+            if not df_hist_global.empty:
+                st.dataframe(df_hist_global, use_container_width=True, hide_index=True)
+                
+                # Opção para o adm baixar esse relatorio completo
+                csv_global = df_hist_global.to_csv(index=False).encode('utf-8')
+                st.download_button("📥 Baixar Relatório Global (.csv)", data=csv_global, file_name=f"Auditoria_Geral_{datetime.today().date()}.csv", mime='text/csv')
+            else:
+                st.info("Nenhum usuário salvou históricos ainda.")
 
     # ========================================================
     # VISÃO PADRÃO (SISTEMA)
@@ -498,7 +547,11 @@ else:
                             df_registro["Grupo"] = grupo_selecionado
                             df_registro["Tarefa"] = tarefa_nome
                             df_registro["Data de Trabalho"] = pd.to_datetime(df_registro["Data de Trabalho"]).dt.date
-                            df_registro = df_registro[["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante"]]
+                            
+                            # Carimba o exato segundo em que o usuário salvou (em horário de Brasília)
+                            df_registro["Data de Registro"] = get_horario_brasilia()
+                            
+                            df_registro = df_registro[["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante", "Data de Registro"]]
                             
                             st.session_state.historico_definitivo = pd.concat(
                                 [st.session_state.historico_definitivo, df_registro], 
@@ -519,11 +572,13 @@ else:
                 
                 df_exibir = st.session_state.historico_definitivo.sort_values(by="Data de Trabalho", ascending=False).copy()
                 
+                # Ao editar o historico pelo usuario, desabilitamos a edição da coluna 'Data de Registro' por segurança
                 df_editado = st.data_editor(
                     df_exibir,
                     column_config={
                         "Tarefa": st.column_config.TextColumn("📝 Tarefa", required=True),
-                        "Data de Trabalho": st.column_config.DateColumn("📅 Data de Trabalho", format="DD/MM/YYYY", required=True)
+                        "Data de Trabalho": st.column_config.DateColumn("📅 Data de Trabalho", format="DD/MM/YYYY", required=True),
+                        "Data de Registro": st.column_config.TextColumn("🕰️ Salvo Em", disabled=True)
                     },
                     use_container_width=True,
                     hide_index=True,
@@ -554,7 +609,7 @@ else:
                     st.write("")
                     st.write("")
                     if st.button("🗑️ Limpar Todo o Histórico", use_container_width=True):
-                        st.session_state.historico_definitivo = pd.DataFrame(columns=["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante"])
+                        st.session_state.historico_definitivo = pd.DataFrame(columns=["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante", "Data de Registro"])
                         salvar_historico_db(st.session_state.user_id, st.session_state.historico_definitivo)
                         st.success("Seu histórico foi limpo!")
                         st.rerun()
