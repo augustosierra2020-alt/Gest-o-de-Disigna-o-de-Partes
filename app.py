@@ -59,77 +59,78 @@ def gerar_escala_sem_repeticao(membros):
 st.title("👥 Sistema Gestão de Designações")
 st.markdown("Gerencie seus grupos, edite datas de trabalho e mantenha o controle total do histórico.")
 
-# Abas da Aplicação - O Streamlit converte automaticamente em menu colapsável ou rolável em telas mobile
+# Abas da Aplicação
 aba_gerador, aba_historico, aba_grupos = st.tabs(["🗓️ Gerar e Editar Escala", "📊 Histórico Consolidado", "🗂️ Gestão de Grupos"])
 
 # --- ABA 1: GERAR E EDITAR ESCALA ---
 with aba_gerador:
     st.header("1. Configurar Nova Atividade")
     
-    # col1 e col2 se adaptam ao tamanho do dispositivo (lado a lado no PC, empilhados no celular)
-    col1, col2 = st.columns([1, 1])
-    with col1:
-        grupo_selecionado = st.selectbox("Selecione o Grupo:", list(st.session_state.grupos.keys()))
-    with col2:
-        tarefa_nome = st.text_input("Nome da Tarefa/Atividade:", value="Coordenação do Evento")
-        
-    if st.button("🔄 Gerar Sugestão de Duplas", type="primary", use_container_width=True):
-        membros = st.session_state.grupos[grupo_selecionado]
-        if len(membros) < 2:
-            st.error("O grupo precisa ter pelo menos 2 pessoas.")
-        else:
-            st.session_state.escala_temporaria = gerar_escala_sem_repeticao(membros)
-            st.toast("Sugestão de duplas gerada! Ajuste as datas abaixo.", icon="💡")
-
-    # Área Editável
-    if st.session_state.escala_temporaria is not None:
-        st.write("---")
-        st.subheader("✍️ 2. Área Editável: Ajuste, Adicione ou Remova Duplas")
-        
-        st.markdown("""
-        * **Editar:** Clique duplo na célula.
-        * **Remover linha:** Selecione a linha na esquerda e aperte **Delete**.
-        * **Adicionar linha:** Clique em **"➕ Add row"** no fim da tabela.
-        """)
-        
-        # O data_editor herda a largura total do dispositivo (computador ou mobile)
-        escala_editada = st.data_editor(
-            st.session_state.escala_temporaria,
-            column_config={
-                "Principal": st.column_config.TextColumn("🧑‍✈️ Principal (Líder)", required=True),
-                "Ajudante": st.column_config.TextColumn("🧑‍🔧 Ajudante", required=True),
-                "Data de Trabalho": st.column_config.DateColumn(
-                    "📅 Data de Trabalho",
-                    min_value=datetime(2026, 1, 1),
-                    format="DD/MM/YYYY",
-                    required=True
-                )
-            },
-            num_rows="dynamic",
-            hide_index=True,
-            use_container_width=True
-        )
-        
-        if st.button("💾 Confirmar e Registrar no Histórico", type="secondary", use_container_width=True):
-            df_registro = escala_editada.dropna(subset=["Principal", "Ajudante"])
+    if not st.session_state.grupos:
+        st.warning("Você não tem nenhum grupo cadastrado. Vá até a aba 'Gestão de Grupos' para criar um.")
+    else:
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            grupo_selecionado = st.selectbox("Selecione o Grupo:", list(st.session_state.grupos.keys()))
+        with col2:
+            tarefa_nome = st.text_input("Nome da Tarefa/Atividade:", value="Coordenação do Evento")
             
-            if df_registro.empty:
-                st.warning("A tabela está vazia. Gere uma sugestão ou adicione linhas antes de salvar.")
+        if st.button("🔄 Gerar Sugestão de Duplas", type="primary", use_container_width=True):
+            membros = st.session_state.grupos[grupo_selecionado]
+            if len(membros) < 2:
+                st.error("O grupo precisa ter pelo menos 2 pessoas.")
             else:
-                df_registro["Grupo"] = grupo_selecionado
-                df_registro["Tarefa"] = tarefa_nome
+                st.session_state.escala_temporaria = gerar_escala_sem_repeticao(membros)
+                st.toast("Sugestão de duplas gerada! Ajuste as datas abaixo.", icon="💡")
+
+        # Área Editável
+        if st.session_state.escala_temporaria is not None:
+            st.write("---")
+            st.subheader("✍️ 2. Área Editável: Ajuste, Adicione ou Remova Duplas")
+            
+            st.markdown("""
+            * **Editar:** Clique duplo na célula.
+            * **Remover linha:** Selecione a linha na esquerda e aperte **Delete**.
+            * **Adicionar linha:** Clique em **"➕ Add row"** no fim da tabela.
+            """)
+            
+            escala_editada = st.data_editor(
+                st.session_state.escala_temporaria,
+                column_config={
+                    "Principal": st.column_config.TextColumn("🧑‍✈️ Principal (Líder)", required=True),
+                    "Ajudante": st.column_config.TextColumn("🧑‍🔧 Ajudante", required=True),
+                    "Data de Trabalho": st.column_config.DateColumn(
+                        "📅 Data de Trabalho",
+                        min_value=datetime(2026, 1, 1),
+                        format="DD/MM/YYYY",
+                        required=True
+                    )
+                },
+                num_rows="dynamic",
+                hide_index=True,
+                use_container_width=True
+            )
+            
+            if st.button("💾 Confirmar e Registrar no Histórico", type="secondary", use_container_width=True):
+                df_registro = escala_editada.dropna(subset=["Principal", "Ajudante"])
                 
-                df_registro["Data de Trabalho"] = pd.to_datetime(df_registro["Data de Trabalho"]).dt.date
-                df_registro = df_registro[["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante"]]
-                
-                st.session_state.historico_definitivo = pd.concat(
-                    [st.session_state.historico_definitivo, df_registro], 
-                    ignore_index=True
-                )
-                
-                st.session_state.escala_temporaria = None
-                st.success("Sucesso! A sua escala personalizada foi salva no Histórico Consolidado.")
-                st.rerun()
+                if df_registro.empty:
+                    st.warning("A tabela está vazia. Gere uma sugestão ou adicione linhas antes de salvar.")
+                else:
+                    df_registro["Grupo"] = grupo_selecionado
+                    df_registro["Tarefa"] = tarefa_nome
+                    
+                    df_registro["Data de Trabalho"] = pd.to_datetime(df_registro["Data de Trabalho"]).dt.date
+                    df_registro = df_registro[["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante"]]
+                    
+                    st.session_state.historico_definitivo = pd.concat(
+                        [st.session_state.historico_definitivo, df_registro], 
+                        ignore_index=True
+                    )
+                    
+                    st.session_state.escala_temporaria = None
+                    st.success("Sucesso! A sua escala personalizada foi salva no Histórico Consolidado.")
+                    st.rerun()
 
 # --- ABA 2: HISTÓRICO CONSOLIDADO ---
 with aba_historico:
@@ -139,7 +140,6 @@ with aba_historico:
         df_exibir = st.session_state.historico_definitivo.sort_values(by="Data de Trabalho", ascending=False)
         st.dataframe(df_exibir, use_container_width=True, hide_index=True)
         
-        # Botões expandem para ocupar a largura total em telas de celular
         csv = df_exibir.to_csv(index=False).encode('utf-8')
         st.download_button(
             label="📥 Baixar Histórico Completo (Excel/CSV)",
@@ -158,41 +158,98 @@ with aba_historico:
 
 # --- ABA 3: GESTÃO DE GRUPOS ---
 with aba_grupos:
-    st.header("🗂️ Visualizar e Editar Integrantes")
-    grupo_visualizar = st.radio("Selecione o grupo para gerenciar:", list(st.session_state.grupos.keys()), horizontal=True)
-    lista_atual = st.session_state.grupos[grupo_visualizar]
+    st.header("🗂️ Gestão de Grupos e Integrantes")
     
-    st.write(f"**Integrantes atuais ({len(lista_atual)} pessoas):**")
-    st.dataframe(pd.DataFrame(lista_atual, columns=["Nome do Integrante"]), use_container_width=True, hide_index=True)
+    # ---------------------------------------------------------
+    # SEÇÃO: ADICIONAR, RENOMEAR E REMOVER GRUPOS
+    # ---------------------------------------------------------
+    st.subheader("1. Gerenciar Grupos")
+    col_add_grp, col_ren_grp, col_del_grp = st.columns(3)
     
-    st.write("---")
-    
-    # Colunas responsivas para os formulários de adição e remoção
-    col_adicionar, col_remover = st.columns([1, 1])
-    
-    with col_adicionar:
-        st.subheader("➕ Adicionar Integrante")
-        novo_nome = st.text_input("Digite o nome da pessoa para adicionar:", key="input_add")
-        if st.button("Confirmar Adição", type="secondary", use_container_width=True):
-            if novo_nome.strip() == "":
-                st.warning("Por favor, digite um nome válido.")
-            elif novo_nome.strip() in lista_atual:
-                st.warning("Esta pessoa já faz parte deste grupo.")
+    with col_add_grp:
+        novo_grupo_nome = st.text_input("Criar Novo Grupo:", key="input_add_grp")
+        if st.button("➕ Adicionar Grupo", use_container_width=True):
+            if novo_grupo_nome.strip() == "":
+                st.warning("Digite um nome válido.")
+            elif novo_grupo_nome.strip() in st.session_state.grupos:
+                st.warning("Esse grupo já existe.")
             else:
-                st.session_state.grupos[grupo_visualizar].append(novo_nome.strip())
-                st.success(f"**{novo_nome.strip()}** foi adicionado(a) com sucesso!")
+                st.session_state.grupos[novo_grupo_nome.strip()] = []
+                st.success(f"Grupo '{novo_grupo_nome}' criado com sucesso!")
                 st.rerun()
                 
-    with col_remover:
-        st.subheader("🗑️ Remover Integrante")
-        if len(lista_atual) > 0:
-            nome_para_remover = st.selectbox("Selecione a pessoa que deseja remover:", lista_atual, key="select_remove")
-            if st.button("Confirmar Remoção", type="primary", use_container_width=True):
-                st.session_state.grupos[grupo_visualizar].remove(nome_para_remover)
-                st.success(f"**{nome_para_remover}** foi removido(a) do grupo!")
+    with col_ren_grp:
+        if st.session_state.grupos:
+            grupo_a_renomear = st.selectbox("Grupo a Renomear:", list(st.session_state.grupos.keys()), key="select_ren_grp")
+            novo_nome_para_grupo = st.text_input("Novo Nome:", key="input_ren_grp")
+            if st.button("✏️ Confirmar Nome", use_container_width=True):
+                if novo_nome_para_grupo.strip() == "":
+                    st.warning("Digite um nome válido.")
+                elif novo_nome_para_grupo.strip() in st.session_state.grupos:
+                    st.warning("Já existe um grupo com este nome.")
+                else:
+                    st.session_state.grupos[novo_nome_para_grupo.strip()] = st.session_state.grupos.pop(grupo_a_renomear)
+                    st.success("Grupo renomeado!")
+                    st.rerun()
+
+    with col_del_grp:
+        if st.session_state.grupos:
+            grupo_a_remover = st.selectbox("Excluir Grupo:", list(st.session_state.grupos.keys()), key="select_del_grp")
+            if st.button("🗑️ Excluir Grupo", use_container_width=True):
+                del st.session_state.grupos[grupo_a_remover]
+                st.success("Grupo excluído com sucesso!")
                 st.rerun()
-        else:
-            st.info("Não há integrantes neste grupo para remover.")
+
+    st.write("---")
+
+    # ---------------------------------------------------------
+    # SEÇÃO: GERENCIAR INTEGRANTES 
+    # ---------------------------------------------------------
+    st.subheader("2. Visualizar e Editar Integrantes")
+    
+    if not st.session_state.grupos:
+        st.info("Não há grupos disponíveis. Crie um novo grupo acima.")
+    else:
+        # Visualização da tabela vinculada ao rádio
+        grupo_visualizar = st.radio("Selecione o grupo para visualizar a lista de integrantes:", list(st.session_state.grupos.keys()), horizontal=True)
+        lista_atual = st.session_state.grupos[grupo_visualizar]
+        
+        st.write(f"**Integrantes atuais do grupo '{grupo_visualizar}' ({len(lista_atual)} pessoas):**")
+        st.dataframe(pd.DataFrame(lista_atual, columns=["Nome do Integrante"]), use_container_width=True, hide_index=True)
+        
+        st.write("---")
+        col_adicionar, col_remover = st.columns([1, 1])
+        
+        with col_adicionar:
+            st.markdown("#### ➕ Adicionar novo integrante em:")
+            # Novo selectbox para escolher o destino da adição
+            grupo_destino = st.selectbox("Escolha o grupo de destino:", list(st.session_state.grupos.keys()), key="select_add_destino")
+            novo_nome = st.text_input("Digite o nome da pessoa para adicionar:", key="input_add_membro")
+            
+            if st.button("Confirmar Adição", type="secondary", use_container_width=True):
+                if novo_nome.strip() == "":
+                    st.warning("Por favor, digite um nome válido.")
+                elif novo_nome.strip() in st.session_state.grupos[grupo_destino]:
+                    st.warning(f"Esta pessoa já faz parte do grupo '{grupo_destino}'.")
+                else:
+                    st.session_state.grupos[grupo_destino].append(novo_nome.strip())
+                    st.success(f"**{novo_nome.strip()}** foi adicionado(a) ao grupo **{grupo_destino}** com sucesso!")
+                    st.rerun()
+                    
+        with col_remover:
+            st.markdown(f"#### 🗑️ Remover do grupo '{grupo_visualizar}'")
+            if len(lista_atual) > 0:
+                nomes_para_remover = st.multiselect("Selecione as pessoas que deseja remover:", lista_atual, key="select_remove_membro")
+                if st.button("Confirmar Remoção", type="primary", use_container_width=True):
+                    if nomes_para_remover:
+                        for nome in nomes_para_remover:
+                            st.session_state.grupos[grupo_visualizar].remove(nome)
+                        st.success(f"**{len(nomes_para_remover)}** integrante(s) removido(s) do grupo '{grupo_visualizar}'!")
+                        st.rerun()
+                    else:
+                        st.warning("Por favor, selecione pelo menos um nome para remover.")
+            else:
+                st.info("Não há integrantes neste grupo para remover.")
 
 # --- RODAPÉ DA PÁGINA RESPONSIVO ---
 st.write("---")
