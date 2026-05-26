@@ -702,4 +702,4 @@ else:
 
         # --- RODAPÉ ---
         st.write("---")
-        st.markdown("""<div style="text-align: center; color: #888888; font-size: 12px; padding: 10px 0px;">Criado e updated por: Sérgio Sierra</div>""", unsafe_allow_html=True)
+        st.markdown("""<div style="text-align: center; color: #888888; font-size: 12px; padding: 10px 0px;">Criado e atualizado por: Sérgio Sierra</div>""", unsafe_allow_html=True)
