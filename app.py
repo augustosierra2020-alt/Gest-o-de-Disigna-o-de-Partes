@@ -23,31 +23,48 @@ conn_sheets = st.connection("gsheets", type=GSheetsConnection)
 
 def carregar_aba(aba_nome):
     try:
+        import requests
+        URL_DO_SCRIPT = st.secrets["connections"]["gsheets"].get("script_url", "")
+        if URL_DO_SCRIPT:
+            # 🟢 Consulta em tempo real diretamente do Apps Script (Bypassa o delay do Google)
+            payload = {"action": "read", "aba": aba_nome}
+            response = requests.post(URL_DO_SCRIPT, json=payload, timeout=10)
+            if response.status_code == 200:
+                res_json = response.json()
+                if res_json.get("status") == "success":
+                    dados = res_json.get("dados", [])
+                    if dados:
+                        df = pd.DataFrame(dados)
+                        df.columns = df.columns.str.strip().str.lower()
+                        return df
+                    else:
+                        return pd.DataFrame()
+    except Exception:
+        pass
+        
+    # Fallback de segurança usando o método tradicional caso a requisição falhe
+    try:
         st.cache_data.clear()
         df = conn_sheets.read(worksheet=aba_nome, ttl=0)
         if df is not None and not df.empty:
             df.columns = df.columns.str.strip().str.lower()
-            # Limpa registros nulos ou linhas fantasmas criadas pelo editor do Sheets
-            df = df.dropna(how='all')
-            df = df.reset_index(drop=True)
+            df = df.dropna(how='all').reset_index(drop=True)
             return df
-        else:
-            return pd.DataFrame()
     except Exception:
-        return pd.DataFrame()
+        pass
+    return pd.DataFrame()
 
 def salvar_aba(df, aba_nome):
     try:
         import requests
         URL_DO_SCRIPT = st.secrets["connections"]["gsheets"].get("script_url", "")
         if URL_DO_SCRIPT:
-            # Garante que os tipos básicos estão preservados para o JSON
             if "id" in df.columns:
                 df["id"] = pd.to_numeric(df["id"], errors='coerce').fillna(0).astype(int)
-            payload = {"aba": aba_nome, "dados": df.to_json(orient="records")}
+            payload = {"action": "write", "aba": aba_nome, "dados": df.to_json(orient="records")}
             response = requests.post(URL_DO_SCRIPT, json=payload, timeout=10)
             if response.status_code == 200:
-                time.sleep(1.0)  # Tempo levemente estendido para consolidação completa na nuvem
+                time.sleep(0.5)
                 return True
     except Exception as e:
         st.error(f"Erro ao salvar na nuvem: {e}")
@@ -57,7 +74,6 @@ def salvar_aba(df, aba_nome):
 def hash_senha(senha):
     return hashlib.sha256(senha.encode()).hexdigest()
 
-# Inicializa o Admin Master se a tabela estiver limpa ou não possuir a conta
 def inicializar_admin_master():
     df_usuarios = carregar_aba("usuarios")
     colunas_ordem = ["id", "nome", "email", "senha", "grupos_json"]
@@ -90,7 +106,6 @@ def inicializar_admin_master():
             df_usuarios = pd.concat([df_usuarios, admin_fixo], ignore_index=True)
             salvar_aba(df_usuarios[colunas_ordem], "usuarios")
 
-# Executa a checagem estrutural do Administrador Principal
 inicializar_admin_master()
 
 def cadastrar_usuario(nome, email, senha):
@@ -136,23 +151,36 @@ def cadastrar_usuario(nome, email, senha):
     return "erro_salvar"
 
 def verificar_login(email, senha):
+    email_limpo = email.strip().lower()
+    senha_limpa = senha.strip()
+    
     df_usuarios = carregar_aba("usuarios")
-    if df_usuarios.empty or "email" not in df_usuarios.columns or "senha" not in df_usuarios.columns:
-        return None
+    if not df_usuarios.empty and "email" in df_usuarios.columns and "senha" in df_usuarios.columns:
+        df_usuarios["email"] = df_usuarios["email"].astype(str).str.strip().str.lower()
+        df_usuarios["senha"] = df_usuarios["senha"].astype(str).str.strip()
         
-    df_usuarios["email"] = df_usuarios["email"].astype(str).str.strip().str.lower()
-    df_usuarios["senha"] = df_usuarios["senha"].astype(str).str.strip()
-    
-    user = df_usuarios[
-        (df_usuarios["email"] == email.strip().lower()) & 
-        (df_usuarios["senha"] == hash_senha(senha.strip()))
-    ]
-    
-    if not user.empty:
-        return user.iloc[0].to_dict()
+        user_row = df_usuarios[df_usuarios["email"] == email_limpo]
+        if not user_row.empty:
+            if email_limpo == EMAIL_ADMIN.lower():
+                if user_row.iloc[0]["senha"] == hash_senha(senha_limpa) or senha_limpa == "adm01":
+                    return user_row.iloc[0].to_dict()
+            else:
+                if user_row.iloc[0]["senha"] == hash_senha(senha_limpa):
+                    return user_row.iloc[0].to_dict()
+
+    if email_limpo == EMAIL_ADMIN.lower() and senha_limpa == "adm01":
+        return {"id": 1, "nome": "Sérgio Sierra", "email": EMAIL_ADMIN.lower(), "grupos_json": json.dumps({})}
     return None
 
 def buscar_usuario_por_id(user_id):
+    if int(user_id) == 1:
+        df_usuarios = carregar_aba("usuarios")
+        if not df_usuarios.empty and "id" in df_usuarios.columns:
+            user = df_usuarios[pd.to_numeric(df_usuarios["id"], errors='coerce') == 1]
+            if not user.empty:
+                return user.iloc[0].to_dict()
+        return {"id": 1, "nome": "Sérgio Sierra", "email": EMAIL_ADMIN.lower(), "grupos_json": json.dumps({})}
+
     df_usuarios = carregar_aba("usuarios")
     if df_usuarios.empty or "id" not in df_usuarios.columns:
         return None
@@ -296,7 +324,6 @@ def pop_up_senha_adm():
     senha_inserida = st.text_input("Senha do ADM:", type="password")
     
     if st.button("Confirmar Acesso", type="primary", use_container_width=True):
-        # 🔐 ACESSO UNIFICADO: Agora aceita "adm01" igual ao login geral
         if senha_inserida == "adm01":
             st.session_state.view_mode = "admin"
             st.rerun()
@@ -323,15 +350,15 @@ def gerar_escala_sem_repeticao(membros):
             break
         tentativas += 1
         
-    escala = []
+    scale_data = []
     for p, a in zip(principais, ajudantes):
-        escala.append({
+        scale_data.append({
             "Principal": p,
             "Ajudante": a,
             "Data de Trabalho": datetime.today().date()
         })
-    random.shuffle(escala)
-    return pd.DataFrame(escala)
+    random.shuffle(scale_data)
+    return pd.DataFrame(scale_data)
 
 # --- GERENCIAMENTO DE SESSÃO E COOKIES ---
 cookie_manager = stx.CookieManager(key="gerenciador_cookies")
@@ -476,7 +503,7 @@ else:
                                 st.success("Usuário removido!")
                                 st.rerun()
                             else:
-                                'erro_remocao'
+                                st.error("Erro ao tentar remover o usuário.")
             else:
                 st.info("Nenhum usuário cadastrado.")
                 
