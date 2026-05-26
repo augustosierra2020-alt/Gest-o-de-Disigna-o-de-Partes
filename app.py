@@ -21,7 +21,7 @@ def get_horario_brasilia():
 # --- CONEXÃO COM O GOOGLE SHEETS ---
 conn_sheets = st.connection("gsheets", type=GSheetsConnection)
 
-# 🚀 OTIMIZAÇÃO: Cache de 5 minutos para leituras. O app não vai mais na internet a cada clique!
+# Cache de 5 minutos para leituras. O app não vai mais na internet a cada clique!
 @st.cache_data(ttl=300, show_spinner=False)
 def carregar_aba(aba_nome):
     try:
@@ -65,7 +65,7 @@ def salvar_aba(df, aba_nome):
             payload = {"action": "write", "aba": aba_nome, "dados": df.to_json(orient="records")}
             response = requests.post(URL_DO_SCRIPT, json=payload, timeout=10)
             if response.status_code == 200:
-                # 🔥 OTIMIZAÇÃO: Limpa o cache apenas ao salvar algo novo, forçando atualização na próxima leitura
+                # Limpa o cache apenas ao salvar algo novo, forçando atualização na próxima leitura
                 st.cache_data.clear()
                 return True
     except Exception as e:
@@ -108,7 +108,7 @@ def inicializar_admin_master():
             df_usuarios = pd.concat([df_usuarios, admin_fixo], ignore_index=True)
             salvar_aba(df_usuarios[colunas_ordem], "usuarios")
 
-# 🚀 OTIMIZAÇÃO CRUCIAL: Garante que a checagem do admin master só rode UMA vez por sessão (Evita lag de digitação)
+# Garante que a checagem do admin master só rode UMA vez por sessão (Evita lag de digitação)
 if "admin_verificado" not in st.session_state:
     inicializar_admin_master()
     st.session_state.admin_verificado = True
@@ -203,7 +203,7 @@ def verificar_email_existe(email):
 
 def atualizar_senha(email, nova_senha):
     df_usuarios = carregar_aba("usuarios")
-    if not df_usuarios.empty and "email" in df_usuarios.columns:
+    if not df_usuarios.empty && "email" in df_usuarios.columns:
         df_usuarios["email"] = df_usuarios["email"].astype(str).str.strip().str.lower()
         idx = df_usuarios[df_usuarios["email"] == email.strip().lower()].index
         if len(idx) > 0:
@@ -504,7 +504,7 @@ else:
                             st.error("❌ Ação Bloqueada! Por segurança, você não pode excluir o Administrador Master.")
                         else:
                             sucesso = deletar_usuario_admin(id_real)
-                            if毁灭_real := sucesso:
+                            if sucesso:
                                 st.success("Usuário removido!")
                                 st.rerun()
                             else:
@@ -538,7 +538,7 @@ else:
                     if len(membros) < 2: st.error("O grupo precisa ter pelo menos 2 pessoas.")
                     else:
                         st.session_state.escala_temporaria = gerar_escala_sem_repeticao(membros)
-                        st.toast("Sugestão de duplas gerada!", icon="💡")
+                        st.toast("Sugestão de duplas generada!", icon="💡")
 
                 if st.session_state.escala_temporaria is not None:
                     st.write("---")
