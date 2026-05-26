@@ -11,7 +11,7 @@ import time
 # Configuração inicial da página web responsiva
 st.set_page_config(page_title="Gestão de Designações e Partes", layout="wide", initial_sidebar_state="expanded")
 
-# --- CONFIGURAÇÃO DE ADMINISTRADOR ---
+# --- CONFIGURAÇÃO DE ADMINISTRADOR MASTER ---
 EMAIL_ADMIN = "augustosierra2020@gmail.com"
 
 # --- FUNÇÃO DE HORÁRIO (BRASÍLIA) ---
@@ -27,11 +27,12 @@ def carregar_aba(aba_nome):
         df = conn_sheets.read(worksheet=aba_nome, ttl=0)
         if df is not None and not df.empty:
             df.columns = df.columns.str.strip().str.lower()
-            # Remove linhas completamente vazias que o Sheets costuma retornar
+            # Limpa registros nulos ou linhas fantasmas criadas pelo editor do Sheets
             df = df.dropna(how='all')
+            df = df.reset_index(drop=True)
+            return df
         else:
-            df = pd.DataFrame()
-        return df
+            return pd.DataFrame()
     except Exception:
         return pd.DataFrame()
 
@@ -40,39 +41,74 @@ def salvar_aba(df, aba_nome):
         import requests
         URL_DO_SCRIPT = st.secrets["connections"]["gsheets"].get("script_url", "")
         if URL_DO_SCRIPT:
+            # Garante que os tipos básicos estão preservados para o JSON
+            if "id" in df.columns:
+                df["id"] = pd.to_numeric(df["id"], errors='coerce').fillna(0).astype(int)
             payload = {"aba": aba_nome, "dados": df.to_json(orient="records")}
             response = requests.post(URL_DO_SCRIPT, json=payload, timeout=10)
             if response.status_code == 200:
-                # Delay de segurança de frações de segundo para o Google consolidar a escrita
-                time.sleep(0.8)
+                time.sleep(1.0)  # Tempo levemente estendido para consolidação completa na nuvem
                 return True
     except Exception as e:
         st.error(f"Erro ao salvar na nuvem: {e}")
     return False
 
-# --- FUNÇÕES DE SEGURANÇA E GERENCIAMENTO DE USUÁRIOS ---
+# --- FUNÇÕES DE SEGURANÇA AND GERENCIAMENTO ---
 def hash_senha(senha):
     return hashlib.sha256(senha.encode()).hexdigest()
 
+# Inicializa o Admin Master se a tabela estiver limpa ou não possuir a conta
+def inicializar_admin_master():
+    df_usuarios = carregar_aba("usuarios")
+    colunas_ordem = ["id", "nome", "email", "senha", "grupos_json"]
+    
+    if df_usuarios.empty or "email" not in df_usuarios.columns:
+        admin_fixo = pd.DataFrame([{
+            "id": 1,
+            "nome": "Sérgio Sierra",
+            "email": EMAIL_ADMIN.strip().lower(),
+            "senha": hash_senha("adm01"),
+            "grupos_json": json.dumps({})
+        }])
+        salvar_aba(admin_fixo[colunas_ordem], "usuarios")
+    else:
+        df_usuarios["email"] = df_usuarios["email"].astype(str).str.strip().str.lower()
+        if not (df_usuarios["email"] == EMAIL_ADMIN.lower()).any():
+            try:
+                ids_validos = pd.to_numeric(df_usuarios["id"], errors='coerce').dropna()
+                novo_id = int(ids_validos.max()) + 1 if not ids_validos.empty else 1
+            except:
+                novo_id = len(df_usuarios) + 1
+                
+            admin_fixo = pd.DataFrame([{
+                "id": int(novo_id),
+                "nome": "Sérgio Sierra",
+                "email": EMAIL_ADMIN.strip().lower(),
+                "senha": hash_senha("adm01"),
+                "grupos_json": json.dumps({})
+            }])
+            df_usuarios = pd.concat([df_usuarios, admin_fixo], ignore_index=True)
+            salvar_aba(df_usuarios[colunas_ordem], "usuarios")
+
+# Executa a checagem estrutural do Administrador Principal
+inicializar_admin_master()
+
 def cadastrar_usuario(nome, email, senha):
     df_usuarios = carregar_aba("usuarios")
+    colunas_ordem = ["id", "nome", "email", "senha", "grupos_json"]
     
-    if not df_usuarios.empty and "email" in df_usuarios.columns:
+    if df_usuarios.empty or "email" not in df_usuarios.columns:
+        df_usuarios = pd.DataFrame(columns=colunas_ordem)
+        novo_id = 1
+    else:
         df_usuarios["email"] = df_usuarios["email"].astype(str).str.strip().str.lower()
         df_usuarios["nome"] = df_usuarios["nome"].astype(str).str.strip().str.lower()
         
-        email_existe = df_usuarios[df_usuarios["email"] == email.strip().lower()]
-        nome_existe = df_usuarios[df_usuarios["nome"] == nome.strip().lower()]
-        
-        if not email_existe.empty:
+        if (df_usuarios["email"] == email.strip().lower()).any():
             return "email_duplicado"
-        if not nome_existe.empty:
+        if (df_usuarios["nome"] == nome.strip().lower()).any():
             return "nome_duplicado"
             
-    # Garantia absoluta de ID sequencial baseado em contagem de registros válidos para evitar sobreposição
-    if df_usuarios.empty or "id" not in df_usuarios.columns:
-        novo_id = 1
-    else:
         try:
             ids_validos = pd.to_numeric(df_usuarios["id"], errors='coerce').dropna()
             novo_id = int(ids_validos.max()) + 1 if not ids_validos.empty else len(df_usuarios) + 1
@@ -87,11 +123,10 @@ def cadastrar_usuario(nome, email, senha):
         "grupos_json": json.dumps({})
     }])
     
+    df_usuarios = carregar_aba("usuarios")
     if df_usuarios.empty:
-        df_usuarios = novo_registro
+        df_usuarios = novo_registro[colunas_ordem]
     else:
-        # Garante a ordem e alinhamento exato das colunas de destino
-        colunas_ordem = ["id", "nome", "email", "senha", "grupos_json"]
         df_usuarios = df_usuarios[colunas_ordem]
         novo_registro = novo_registro[colunas_ordem]
         df_usuarios = pd.concat([df_usuarios, novo_registro], ignore_index=True)
@@ -179,8 +214,10 @@ def deletar_usuario_admin(user_id):
     
     if not df_usuarios.empty:
         user_para_deletar = df_usuarios[df_usuarios["id"] == int(user_id)]
-        if not user_para_deletar.empty and user_para_deletar.iloc[0]["email"].strip().lower() == EMAIL_ADMIN.lower():
-            return False
+        if not user_para_deletar.empty:
+            email_alvo = str(user_para_deletar.iloc[0]["email"]).strip().lower()
+            if email_alvo == EMAIL_ADMIN.lower() or int(user_id) == 1:
+                return False
             
         df_usuarios = df_usuarios[df_usuarios["id"] != int(user_id)]
         salvar_aba(df_usuarios, "usuarios")
@@ -229,7 +266,10 @@ def salvar_historico_db(user_id, df_historico_usuario):
         
     if novos_registros:
         df_novos = pd.DataFrame(novos_registros)
-        df_global = pd.concat([df_global, df_novos], ignore_index=True)
+        if df_global.empty:
+            df_global = df_novos
+        else:
+            df_global = pd.concat([df_global, df_novos], ignore_index=True)
         
     salvar_aba(df_global, "historico")
 
@@ -417,7 +457,7 @@ else:
                         if novo_nome_admin.strip():
                             idx = df_usuarios[df_usuarios["Nome"] + " (" + df_usuarios["Email"] + ")" == user_id_editar].index[0]
                             atualizar_nome_usuario_admin(int(df_usuarios.loc[idx, "id"]), novo_nome_admin)
-                            st.success("Nome updated!")
+                            st.success("Nome atualizado!")
                             st.rerun()
                 with col2:
                     st.subheader("🗑️ Remover Usuário")
@@ -427,7 +467,7 @@ else:
                         id_real = int(df_usuarios.loc[idx, "id"])
                         email_real = df_usuarios.loc[idx, "Email"].strip().lower()
                         
-                        if email_real == EMAIL_ADMIN.strip().lower():
+                        if email_real == EMAIL_ADMIN.strip().lower() or id_real == 1:
                             st.error("❌ Ação Bloqueada! Por segurança, você não pode excluir o Administrador Master.")
                         else:
                             sucesso = deletar_usuario_admin(id_real)
@@ -503,7 +543,7 @@ else:
             st.header("📊 Seu Histórico de Atividades")
             if not st.session_state.historico_definitivo.empty:
                 df_exibir = st.session_state.historico_definitivo.sort_values(by="Data de Trabalho", ascending=False).copy()
-                df_editado = st.data_editor(
+                df_editated = st.data_editor(
                     df_exibir,
                     column_config={
                         "Tarefa": st.column_config.TextColumn("📝 Tarefa", required=True),
@@ -513,8 +553,8 @@ else:
                     use_container_width=True, hide_index=True, key="editor_historico_definitivo"
                 )
                 
-                if not df_editado.equals(st.session_state.historico_definitivo):
-                    st.session_state.historico_definitivo = df_editado
+                if not df_editated.equals(st.session_state.historico_definitivo):
+                    st.session_state.historico_definitivo = df_editated
                     salvar_historico_db(st.session_state.user_id, st.session_state.historico_definitivo)
                 
                 st.write("---")
