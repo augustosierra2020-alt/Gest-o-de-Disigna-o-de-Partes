@@ -203,7 +203,8 @@ def verificar_email_existe(email):
 
 def atualizar_senha(email, nova_senha):
     df_usuarios = carregar_aba("usuarios")
-    if not df_usuarios.empty && "email" in df_usuarios.columns:
+    # Corrigido de '&&' para 'and'
+    if not df_usuarios.empty and "email" in df_usuarios.columns:
         df_usuarios["email"] = df_usuarios["email"].astype(str).str.strip().str.lower()
         idx = df_usuarios[df_usuarios["email"] == email.strip().lower()].index
         if len(idx) > 0:
@@ -490,7 +491,7 @@ else:
                         if novo_nome_admin.strip():
                             idx = df_usuarios[df_usuarios["Nome"] + " (" + df_usuarios["Email"] + ")" == user_id_editar].index[0]
                             atualizar_nome_usuario_admin(int(df_usuarios.loc[idx, "id"]), novo_nome_admin)
-                            st.success("Nome atualizado!")
+                            st.success("Nome updated!")
                             st.rerun()
                 with col2:
                     st.subheader("🗑️ Remover Usuário")
@@ -506,7 +507,7 @@ else:
                             sucesso = deletar_usuario_admin(id_real)
                             if sucesso:
                                 st.success("Usuário removido!")
-                                st.rerun()
+                                r = st.rerun()
                             else:
                                 st.error("Erro ao tentar remover o usuário.")
             else:
@@ -537,7 +538,7 @@ else:
                     membros = st.session_state.grupos[grupo_selecionado]
                     if len(membros) < 2: st.error("O grupo precisa ter pelo menos 2 pessoas.")
                     else:
-                        st.session_state.escala_temporaria = gerar_escala_sem_repeticao(membros)
+                        st.session_state.escala_temporaria = generar_escala_sem_repeticao(membros)
                         st.toast("Sugestão de duplas generada!", icon="💡")
 
                 if st.session_state.escala_temporaria is not None:
