@@ -210,6 +210,82 @@ def atualizar_senha(email, nova_senha):
             df_usuarios.loc[idx, "senha"] = hash_senha(nova_senha.strip())
             salvar_aba(df_usuarios, "usuarios")
 
+# --- FUNÇÕES EXCLUSIVAS DO HISTÓRICO (PADRÃO POR BLOCOS CLOUD) ---
+
+# 🧱 FUNÇÃO A: Apenas acrescenta o novo bloco gerado no final do arquivo global (Mantém a ordem cronológica intacta)
+def acrescentar_historico_db(user_id, df_novo_bloco):
+    df_global = carregar_aba("historico")
+    novos_registros = []
+    proximo_id = 1 if df_global.empty or "id" not in df_global.columns else int(df_global["id"].max()) + 1
+    
+    for _, row in df_novo_bloco.iterrows():
+        novos_registros.append({
+            "id": proximo_id,
+            "user_id": int(user_id),
+            "grupo": row['Grupo'],
+            "tarefa": row['Tarefa'],
+            "data_trabalho": str(row['Data de Trabalho']),
+            "principal": row['Principal'],
+            "ajudante": row['Ajudante'],
+            "data_registro": row.get('Data de Registro', get_horario_brasilia())
+        })
+        proximo_id += 1
+        
+    if novos_registros:
+        df_novos = pd.DataFrame(novos_registros)
+        if df_global.empty:
+            df_global = df_novos
+        else:
+            df_global = pd.concat([df_global, df_novos], ignore_index=True)
+        salvar_aba(df_global, "historico")
+
+# 📝 FUNÇÃO B: Executada APENAS em caso de edição manual da tabela ou exclusão total do histórico do usuário
+def atualizar_historico_completo_db(user_id, df_historico_completo):
+    df_global = carregar_aba("historico")
+    if not df_global.empty and "user_id" in df_global.columns:
+        df_global = df_global[df_global["user_id"] != int(user_id)]
+        
+    novos_registros = []
+    proximo_id = 1 if df_global.empty or "id" not in df_global.columns else int(df_global["id"].max()) + 1
+    
+    for _, row in df_historico_completo.iterrows():
+        novos_registros.append({
+            "id": proximo_id,
+            "user_id": int(user_id),
+            "grupo": row['Grupo'],
+            "tarefa": row['Tarefa'],
+            "data_trabalho": str(row['Data de Trabalho']),
+            "principal": row['Principal'],
+            "ajudante": row['Ajudante'],
+            "data_registro": row.get('Data de Registro', get_horario_brasilia())
+        })
+        proximo_id += 1
+        
+    if novos_registros:
+        df_novos = pd.DataFrame(novos_registros)
+        if df_global.empty:
+            df_global = df_novos
+        else:
+            df_global = pd.concat([df_global, df_novos], ignore_index=True)
+            
+    salvar_aba(df_global, "historico")
+
+def carregar_historico_db(user_id):
+    df_global = carregar_aba("historico")
+    if df_global.empty or "user_id" not in df_global.columns:
+        return pd.DataFrame(columns=["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante", "Data de Registro"])
+        
+    df_user = df_global[df_global["user_id"] == int(user_id)].copy()
+    if df_user.empty:
+        return pd.DataFrame(columns=["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante", "Data de Registro"])
+        
+    df_user = df_user.rename(columns={
+        "grupo": "Grupo", "tarefa": "Tarefa", "data_trabalho": "Data de Trabalho",
+        "principal": "Principal", "ajudante": "Ajudante", "data_registro": "Data de Registro"
+    })
+    df_user["Data de Trabalho"] = pd.to_datetime(df_user["Data de Trabalho"]).dt.date
+    return df_user[["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante", "Data de Registro"]]
+
 # --- FUNÇÕES EXCLUSIVAS DO ADMIN (PAINEL GOOGLE SHEETS) ---
 def listar_todos_usuarios():
     df_usuarios = carregar_aba("usuarios")
@@ -275,53 +351,6 @@ def salvar_grupos_db(user_id, grupos_dict):
             df_usuarios.loc[idx, "grupos_json"] = json.dumps(grupos_dict)
             salvar_aba(df_usuarios, "usuarios")
 
-def salvar_historico_db(user_id, df_historico_usuario):
-    df_global = carregar_aba("historico")
-    
-    if not df_global.empty and "user_id" in df_global.columns:
-        df_global = df_global[df_global["user_id"] != int(user_id)]
-        
-    novos_registros = []
-    proximo_id = 1 if df_global.empty or "id" not in df_global.columns else int(df_global["id"].max()) + 1
-    
-    for _, row in df_historico_usuario.iterrows():
-        novos_registros.append({
-            "id": proximo_id,
-            "user_id": int(user_id),
-            "grupo": row['Grupo'],
-            "tarefa": row['Tarefa'],
-            "data_trabalho": str(row['Data de Trabalho']),
-            "principal": row['Principal'],
-            "ajudante": row['Ajudante'],
-            "data_registro": row.get('Data de Registro', get_horario_brasilia())
-        })
-        proximo_id += 1
-        
-    if novos_registros:
-        df_novos = pd.DataFrame(novos_registros)
-        if df_global.empty:
-            df_global = df_novos
-        else:
-            df_global = pd.concat([df_global, df_novos], ignore_index=True)
-        
-    salvar_aba(df_global, "historico")
-
-def carregar_historico_db(user_id):
-    df_global = carregar_aba("historico")
-    if df_global.empty or "user_id" not in df_global.columns:
-        return pd.DataFrame(columns=["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante", "Data de Registro"])
-        
-    df_user = df_global[df_global["user_id"] == int(user_id)].copy()
-    if df_user.empty:
-        return pd.DataFrame(columns=["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante", "Data de Registro"])
-        
-    df_user = df_user.rename(columns={
-        "grupo": "Grupo", "tarefa": "Tarefa", "data_trabalho": "Data de Trabalho",
-        "principal": "Principal", "ajudante": "Ajudante", "data_registro": "Data de Registro"
-    })
-    df_user["Data de Trabalho"] = pd.to_datetime(df_user["Data de Trabalho"]).dt.date
-    return df_user[["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante", "Data de Registro"]]
-
 # --- POP-UP DE AUTENTICAÇÃO DO ADMIN ---
 @st.dialog("🔒 Autenticação Restrita")
 def pop_up_senha_adm():
@@ -339,7 +368,7 @@ def pop_up_senha_adm():
 def gerar_escala_sem_repeticao(membros):
     if len(membros) < 2:
         return None
-    principais = membros.copy()
+    principais = miembros = membros.copy()
     random.shuffle(principais)
     ajudantes = membros.copy()
     
@@ -490,7 +519,7 @@ else:
                         if novo_nome_admin.strip():
                             idx = df_usuarios[df_usuarios["Nome"] + " (" + df_usuarios["Email"] + ")" == user_id_editar].index[0]
                             atualizar_nome_usuario_admin(int(df_usuarios.loc[idx, "id"]), novo_nome_admin)
-                            st.success("Nome updated!")
+                            st.success("Nome atualizado!")
                             st.rerun()
                 with col2:
                     st.subheader("🗑️ Remover Usuário")
@@ -537,7 +566,6 @@ else:
                     membros = st.session_state.grupos[grupo_selecionado]
                     if len(membros) < 2: st.error("O grupo precisa ter pelo menos 2 pessoas.")
                     else:
-                        # 💡 CORRIGIDO: Agora aponta exatamente para "gerar_escala_sem_repeticao" (sem o 'n')
                         st.session_state.escala_temporaria = gerar_escala_sem_repeticao(membros)
                         st.toast("Sugestão de duplas gerada!", icon="💡")
 
@@ -566,11 +594,15 @@ else:
                             df_registro["Data de Registro"] = get_horario_brasilia()
                             
                             df_registro = df_registro[["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante", "Data de Registro"]]
+                            
+                            # 🧱 SALVAMENTO EM BLOCOS: Envia somente o bloco novo gerado mantendo o passado intocado
+                            acrescentar_historico_db(st.session_state.user_id, df_registro)
+                            
+                            # Atualiza a memória local da sessão atual
                             st.session_state.historico_definitivo = pd.concat([st.session_state.historico_definitivo, df_registro], ignore_index=True)
-                            salvar_historico_db(st.session_state.user_id, st.session_state.historico_definitivo)
                             
                             st.session_state.escala_temporaria = None
-                            st.success("Escala salva com sucesso na nuvem!")
+                            st.success("Escala salva com sucesso na nuvem por blocos!")
                             st.rerun()
 
         with aba_historico:
@@ -587,9 +619,10 @@ else:
                     use_container_width=True, hide_index=True, key="editor_historico_definitivo"
                 )
                 
+                # Caso haja edição manual das células da tabela pelo usuário, ele regrava o pacote corrigido
                 if not df_editated.equals(st.session_state.historico_definitivo):
                     st.session_state.historico_definitivo = df_editated
-                    salvar_historico_db(st.session_state.user_id, st.session_state.historico_definitivo)
+                    atualizar_historico_completo_db(st.session_state.user_id, st.session_state.historico_definitivo)
                 
                 st.write("---")
                 col_nome, col_baixar, col_limpar = st.columns([2, 1, 1])
@@ -602,7 +635,7 @@ else:
                     st.write(""); st.write("")
                     if st.button("🗑️ Limpar Todo o Histórico", use_container_width=True):
                         st.session_state.historico_definitivo = pd.DataFrame(columns=["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante", "Data de Registro"])
-                        salvar_historico_db(st.session_state.user_id, st.session_state.historico_definitivo)
+                        atualizar_historico_completo_db(st.session_state.user_id, st.session_state.historico_definitivo)
                         st.rerun()
             else: st.info("Nenhum registro confirmado.")
 
