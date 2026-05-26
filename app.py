@@ -296,7 +296,8 @@ def pop_up_senha_adm():
     senha_inserida = st.text_input("Senha do ADM:", type="password")
     
     if st.button("Confirmar Acesso", type="primary", use_container_width=True):
-        if senha_inserida == "admsergio25":
+        # 🔐 ACESSO UNIFICADO: Agora aceita "adm01" igual ao login geral
+        if senha_inserida == "adm01":
             st.session_state.view_mode = "admin"
             st.rerun()
         else:
@@ -475,7 +476,7 @@ else:
                                 st.success("Usuário removido!")
                                 st.rerun()
                             else:
-                                st.error("Erro crítico ao tentar remover.")
+                                'erro_remocao'
             else:
                 st.info("Nenhum usuário cadastrado.")
                 
@@ -635,4 +636,4 @@ else:
 
         # --- RODAPÉ ---
         st.write("---")
-        st.markdown("""<div style="text-align: center; color: #888888; font-size: 12px; padding: 10px 0px;">Criado e atualizado por: Sérgio Sierra</div>""", unsafe_allow_html=True)
+        st.markdown("""<div style="text-align: center; color: #888888; font-size: 12px; padding: 10px 0px;">Criado e updated por: Sérgio Sierra</div>""", unsafe_allow_html=True)
