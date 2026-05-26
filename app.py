@@ -21,12 +21,14 @@ def get_horario_brasilia():
 # --- CONEXÃO COM O GOOGLE SHEETS ---
 conn_sheets = st.connection("gsheets", type=GSheetsConnection)
 
+# 🚀 OTIMIZAÇÃO: Cache de 5 minutos para leituras. O app não vai mais na internet a cada clique!
+@st.cache_data(ttl=300, show_spinner=False)
 def carregar_aba(aba_nome):
     try:
         import requests
         URL_DO_SCRIPT = st.secrets["connections"]["gsheets"].get("script_url", "")
         if URL_DO_SCRIPT:
-            # 🟢 Consulta em tempo real diretamente do Apps Script (Bypassa o delay do Google)
+            # Consulta em tempo real diretamente do Apps Script
             payload = {"action": "read", "aba": aba_nome}
             response = requests.post(URL_DO_SCRIPT, json=payload, timeout=10)
             if response.status_code == 200:
@@ -42,9 +44,8 @@ def carregar_aba(aba_nome):
     except Exception:
         pass
         
-    # Fallback de segurança usando o método tradicional caso a requisição falhe
+    # Fallback silencioso usando o método tradicional
     try:
-        st.cache_data.clear()
         df = conn_sheets.read(worksheet=aba_nome, ttl=0)
         if df is not None and not df.empty:
             df.columns = df.columns.str.strip().str.lower()
@@ -64,7 +65,8 @@ def salvar_aba(df, aba_nome):
             payload = {"action": "write", "aba": aba_nome, "dados": df.to_json(orient="records")}
             response = requests.post(URL_DO_SCRIPT, json=payload, timeout=10)
             if response.status_code == 200:
-                time.sleep(0.5)
+                # 🔥 OTIMIZAÇÃO: Limpa o cache apenas ao salvar algo novo, forçando atualização na próxima leitura
+                st.cache_data.clear()
                 return True
     except Exception as e:
         st.error(f"Erro ao salvar na nuvem: {e}")
@@ -106,7 +108,10 @@ def inicializar_admin_master():
             df_usuarios = pd.concat([df_usuarios, admin_fixo], ignore_index=True)
             salvar_aba(df_usuarios[colunas_ordem], "usuarios")
 
-inicializar_admin_master()
+# 🚀 OTIMIZAÇÃO CRUCIAL: Garante que a checagem do admin master só rode UMA vez por sessão (Evita lag de digitação)
+if "admin_verificado" not in st.session_state:
+    inicializar_admin_master()
+    st.session_state.admin_verificado = True
 
 def cadastrar_usuario(nome, email, senha):
     df_usuarios = carregar_aba("usuarios")
@@ -499,7 +504,7 @@ else:
                             st.error("❌ Ação Bloqueada! Por segurança, você não pode excluir o Administrador Master.")
                         else:
                             sucesso = deletar_usuario_admin(id_real)
-                            if sucesso:
+                            if毁灭_real := sucesso:
                                 st.success("Usuário removido!")
                                 st.rerun()
                             else:
