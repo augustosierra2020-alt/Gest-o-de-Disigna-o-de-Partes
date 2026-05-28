@@ -534,7 +534,7 @@ else:
                         if novo_nome_admin.strip():
                             idx = df_usuarios[df_usuarios["Nome"] + " (" + df_usuarios["Email"] + ")" == user_id_editar].index[0]
                             atualizar_nome_usuario_admin(int(df_usuarios.loc[idx, "id"]), novo_nome_admin)
-                            st.success("Nome atualizado!")
+                            st.success("Nome updated!")
                             st.rerun()
                 with col2:
                     st.subheader("🗑️ Remover Usuário")
@@ -619,63 +619,62 @@ else:
             st.header("📊 Seu Histórico de Atividades")
             if not st.session_state.historico_definitivo.empty:
                 
+                # --- MODO LEITURA (100% COLORIDO E LIVRE DO BUG DO STREAMLIT) ---
                 df_exibir = normalizar_tabela(st.session_state.historico_definitivo).iloc[::-1].reset_index(drop=True)
-                
-                # 🚀 OTIMIZAÇÃO DE COR 1: Transforma as datas em texto antes de renderizar
                 df_exibir["Data de Trabalho"] = df_exibir["Data de Trabalho"].dt.strftime("%d/%m/%Y")
                 
-                # 🚀 OTIMIZAÇÃO DE COR 2: Renomeia as colunas no próprio Pandas
-                df_exibir = df_exibir.rename(columns={
-                    "Grupo": "🗂️ Grupo",
-                    "Tarefa": "📝 Tarefa",
-                    "Data de Trabalho": "📅 Data de Trabalho",
-                    "Principal": "🧑‍✈️ Principal",
-                    "Ajudante": "🧑‍🔧 Ajudante",
-                    "Data de Registro": "🕰️ Salvo Em"
+                df_exibir_visual = df_exibir.rename(columns={
+                    "Grupo": "🗂️ Grupo", "Tarefa": "📝 Tarefa", "Data de Trabalho": "📅 Data de Trabalho",
+                    "Principal": "🧑‍✈️ Principal", "Ajudante": "🧑‍🔧 Ajudante", "Data de Registro": "🕰️ Salvo Em"
                 })
                 
                 cores_pasteis = ['#E8F4F8', '#FFF3CD', '#D1E7DD', '#F8D7DA', '#E2E3E5', '#F3D8F4']
-                unique_timestamps = df_exibir['🕰️ Salvo Em'].unique()
+                unique_timestamps = df_exibir_visual['🕰️ Salvo Em'].unique()
                 map_cores = {ts: cores_pasteis[i % len(cores_pasteis)] for i, ts in enumerate(unique_timestamps)}
                 
                 def colorir_fundo(row):
                     cor = map_cores.get(row['🕰️ Salvo Em'], '#FFFFFF')
-                    return [f'background-color: {cor}; color: #212529;'] * len(row)
+                    return [f'background-color: {cor}'] * len(row)
                 
-                df_estilizado = df_exibir.style.apply(colorir_fundo, axis=1)
+                # 🚀 O SEGREDO 1: Esconder o index de forma nativa no Pandas (Dribla o bug do Streamlit)
+                try:
+                    df_estilizado = df_exibir_visual.style.apply(colorir_fundo, axis=1).hide(axis="index")
+                except AttributeError:
+                    df_estilizado = df_exibir_visual.style.apply(colorir_fundo, axis=1).hide_index()
 
-                # 🚀 OTIMIZAÇÃO DE COR 3: Usa apenas regras leves no Streamlit para não apagar a cor
-                df_editated = st.data_editor(
-                    df_estilizado,
-                    column_config={
-                        "🗂️ Grupo": st.column_config.Column(required=True),
-                        "📝 Tarefa": st.column_config.Column(required=True),
-                        "📅 Data de Trabalho": st.column_config.Column(required=True),
-                        "🧑‍✈️ Principal": st.column_config.Column(required=True),
-                        "🧑‍🔧 Ajudante": st.column_config.Column(required=True),
-                        "🕰️ Salvo Em": st.column_config.Column(disabled=True)
-                    },
-                    use_container_width=True, hide_index=True, key="editor_historico_definitivo"
-                )
+                # 🚀 O SEGREDO 2: Não passamos hide_index=True no comando abaixo!
+                st.dataframe(df_estilizado, use_container_width=True)
                 
-                # Renomeia de volta para o padrão original que a nuvem aceita
-                df_editated_db = df_editated.rename(columns={
-                    "🗂️ Grupo": "Grupo", "📝 Tarefa": "Tarefa", "📅 Data de Trabalho": "Data de Trabalho",
-                    "🧑‍✈️ Principal": "Principal", "🧑‍🔧 Ajudante": "Ajudante", "🕰️ Salvo Em": "Data de Registro"
-                })
-                df_exibir_db = df_exibir.rename(columns={
-                    "🗂️ Grupo": "Grupo", "📝 Tarefa": "Tarefa", "📅 Data de Trabalho": "Data de Trabalho",
-                    "🧑‍✈️ Principal": "Principal", "🧑‍🔧 Ajudante": "Ajudante", "🕰️ Salvo Em": "Data de Registro"
-                })
+                # --- MODO EDIÇÃO AVANÇADA (Mantido caso queira corrigir algo) ---
+                with st.expander("🛠️ Ativar Modo de Edição Manual (Painel Branco)"):
+                    st.info("💡 Como a tabela acima foi blindada para aceitar as cores, use este painel se precisar alterar dados manualmente.")
+                    
+                    df_editated = st.data_editor(
+                        df_exibir_visual,
+                        column_config={
+                            "🕰️ Salvo Em": st.column_config.Column(disabled=True)
+                        },
+                        use_container_width=True, hide_index=True, key="editor_historico_definitivo"
+                    )
+                    
+                    df_editated_db = df_editated.rename(columns={
+                        "🗂️ Grupo": "Grupo", "📝 Tarefa": "Tarefa", "📅 Data de Trabalho": "Data de Trabalho",
+                        "🧑‍✈️ Principal": "Principal", "🧑‍🔧 Ajudante": "Ajudante", "🕰️ Salvo Em": "Data de Registro"
+                    })
+                    df_exibir_db = df_exibir.rename(columns={
+                        "🗂️ Grupo": "Grupo", "📝 Tarefa": "Tarefa", "📅 Data de Trabalho": "Data de Trabalho",
+                        "🧑‍✈️ Principal": "Principal", "🧑‍🔧 Ajudante": "Ajudante", "🕰️ Salvo Em": "Data de Registro"
+                    })
 
-                df_editated_seguro = normalizar_tabela(df_editated_db)
-                df_exibir_seguro = normalizar_tabela(df_exibir_db)
+                    df_editated_seguro = normalizar_tabela(df_editated_db)
+                    df_exibir_seguro = normalizar_tabela(df_exibir_db)
 
-                if not df_editated_seguro.equals(df_exibir_seguro):
-                    df_para_salvar = df_editated_seguro.iloc[::-1].reset_index(drop=True)
-                    st.session_state.historico_definitivo = normalizar_tabela(df_para_salvar)
-                    atualizar_historico_completo_db(st.session_state.user_id, df_para_salvar)
-                    st.success("Alteração manual salva na nuvem!")
+                    if not df_editated_seguro.equals(df_exibir_seguro):
+                        df_para_salvar = df_editated_seguro.iloc[::-1].reset_index(drop=True)
+                        st.session_state.historico_definitivo = normalizar_tabela(df_para_salvar)
+                        atualizar_historico_completo_db(st.session_state.user_id, df_para_salvar)
+                        st.success("Alteração manual salva na nuvem!")
+                        st.rerun()
                 
                 st.write("---")
                 col_nome, col_baixar, col_limpar = st.columns([2, 1, 1])
