@@ -598,12 +598,15 @@ else:
         with aba_historico:
             st.header("📊 Seu Histórico de Atividades")
             if not st.session_state.historico_definitivo.empty:
-                # 🛠️ CORREÇÃO DE VELOCIDADE: Resetamos o índice após ordenar para o "equals" funcionar perfeitamente
-                df_exibir = st.session_state.historico_definitivo.sort_values(by="Data de Trabalho", ascending=False).reset_index(drop=True)
+                # 🛠️ CORREÇÃO DE LÓGICA DE ORDENAÇÃO: Inverte os dados para o mais novo no topo mantendo os blocos intactos
+                df_exibir = st.session_state.historico_definitivo.iloc[::-1].reset_index(drop=True)
                 
                 # 🎨 APLICAÇÃO DE CORES PASTÉIS POR BLOCO (DATA DE REGISTRO)
                 cores_pasteis = ['#E8F4F8', '#FFF3CD', '#D1E7DD', '#F8D7DA', '#E2E3E5', '#F3D8F4']
-                map_cores = {ts: cores_pasteis[i % len(cores_pasteis)] for i, ts in enumerate(df_exibir['Data de Registro'].unique())}
+                
+                # Cria o mapa de cores preservando a ordem exata dos blocos
+                unique_timestamps = df_exibir['Data de Registro'].unique()
+                map_cores = {ts: cores_pasteis[i % len(cores_pasteis)] for i, ts in enumerate(unique_timestamps)}
                 
                 def colorir_fundo(row):
                     cor = map_cores.get(row['Data de Registro'], '#FFFFFF')
@@ -611,11 +614,15 @@ else:
                 
                 df_estilizado = df_exibir.style.apply(colorir_fundo, axis=1)
 
+                # 🛠️ CORREÇÃO VISUAL: Configurando explicitamente TODAS as colunas para forçar a cor em 100% da linha
                 df_editated = st.data_editor(
                     df_estilizado,
                     column_config={
+                        "Grupo": st.column_config.TextColumn("🗂️ Grupo", required=True),
                         "Tarefa": st.column_config.TextColumn("📝 Tarefa", required=True),
                         "Data de Trabalho": st.column_config.DateColumn("📅 Data de Trabalho", format="DD/MM/YYYY", required=True),
+                        "Principal": st.column_config.TextColumn("🧑‍✈️ Principal", required=True),
+                        "Ajudante": st.column_config.TextColumn("🧑‍🔧 Ajudante", required=True),
                         "Data de Registro": st.column_config.TextColumn("🕰️ Salvo Em", disabled=True)
                     },
                     use_container_width=True, hide_index=True, key="editor_historico_definitivo"
@@ -623,8 +630,10 @@ else:
                 
                 # Somente envia pro banco de dados SE você alterar manualmente algum nome dentro da tabela
                 if not df_editated.equals(df_exibir):
-                    st.session_state.historico_definitivo = df_editated
-                    atualizar_historico_completo_db(st.session_state.user_id, df_editated)
+                    # Como nós invertemos para exibir (iloc[::-1]), desinvertemos para salvar do jeito original
+                    df_para_salvar = df_editated.iloc[::-1].reset_index(drop=True)
+                    st.session_state.historico_definitivo = df_para_salvar
+                    atualizar_historico_completo_db(st.session_state.user_id, df_para_salvar)
                     st.success("Alteração manual salva na nuvem!")
                 
                 st.write("---")
