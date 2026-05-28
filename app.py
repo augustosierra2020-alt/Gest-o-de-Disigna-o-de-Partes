@@ -14,7 +14,7 @@ st.set_page_config(page_title="Gestão de Designações e Partes", layout="wide"
 # --- CONFIGURAÇÃO DE ADMINISTRADOR MASTER ---
 EMAIL_ADMIN = "augustosierra2020@gmail.com"
 
-# --- 🛡️ INICIALIZAÇÃO DE MEMÓRIA (BLINDAGEM CONTRA ATTRIBUTE ERROR) ---
+# --- 🛡️ INICIALIZAÇÃO DE MEMÓRIA ---
 if "user_id" not in st.session_state:
     st.session_state.user_id = None
 if "user_nome" not in st.session_state:
@@ -84,7 +84,6 @@ def salvar_aba(df, aba_nome):
             payload = {"action": "write", "aba": aba_nome, "dados": df.to_json(orient="records")}
             response = requests.post(URL_DO_SCRIPT, json=payload, timeout=10)
             if response.status_code == 200:
-                # ⚡ OTIMIZAÇÃO EXTREMA: Limpa o cache APENAS da aba que foi salva, deixando o resto rápido!
                 carregar_aba.clear(aba_nome)
                 return True
     except Exception as e:
@@ -282,7 +281,9 @@ def carregar_historico_db(user_id):
         "grupo": "Grupo", "tarefa": "Tarefa", "data_trabalho": "Data de Trabalho",
         "principal": "Principal", "ajudante": "Ajudante", "data_registro": "Data de Registro"
     })
-    df_user["Data de Trabalho"] = pd.to_datetime(df_user["Data de Trabalho"]).dt.date
+    
+    # FORÇA a conversão imediata para Data oficial ao baixar da nuvem
+    df_user["Data de Trabalho"] = pd.to_datetime(df_user["Data de Trabalho"], errors="coerce").dt.date
     return df_user[["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante", "Data de Registro"]]
 
 # --- FUNÇÕES EXCLUSIVAS DO ADMIN ---
@@ -362,7 +363,6 @@ def pop_up_senha_adm():
         else:
             st.error("Senha incorreta! Acesso negado.")
 
-# --- 🚀 FUNÇÃO DE GERAÇÃO ALEATÓRIA OTIMIZADA ---
 def gerar_escala_sem_repeticao(membros):
     if len(membros) < 2:
         return None
@@ -388,7 +388,8 @@ def gerar_escala_sem_repeticao(membros):
         scale_data.append({
             "Principal": p,
             "Ajudante": a,
-            "Data de Trabalho": datetime.today().date()
+            # Mantém como objeto datetime para que o Pandas processe como 100% nativo de dados temporais
+            "Data de Trabalho": datetime.today()
         })
     return pd.DataFrame(scale_data)
 
@@ -456,7 +457,7 @@ if st.session_state.user_id is None:
                 elif resultado == "email_duplicado":
                     st.error("⚠️ Este email já está cadastrado.")
                 elif resultado == "nome_duplicado":
-                    st.error("⚠️ Este nome já está em uso.")
+                    st.error("⚠️ Este nome já está in uso.")
                 else:
                     st.error("Erro técnico de comunicação com o Google. Tente novamente.")
             else:
@@ -564,8 +565,13 @@ else:
                 if st.session_state.escala_temporaria is not None:
                     st.write("---")
                     st.subheader("✍️ 2. Área Editável: Ajuste, Adicione ou Remova Duplas")
+                    
+                    # 🛠️ BLINDAGEM DO TIPO DE DATA NO GERADOR
+                    df_temp = st.session_state.escala_temporaria.copy()
+                    df_temp["Data de Trabalho"] = pd.to_datetime(df_temp["Data de Trabalho"], errors="coerce")
+                    
                     escala_editada = st.data_editor(
-                        st.session_state.escala_temporaria,
+                        df_temp,
                         column_config={
                             "Principal": st.column_config.TextColumn("🧑‍✈️ Principal (Líder)", required=True),
                             "Ajudante": st.column_config.TextColumn("🧑‍🔧 Ajudante", required=True),
@@ -598,13 +604,15 @@ else:
         with aba_historico:
             st.header("📊 Seu Histórico de Atividades")
             if not st.session_state.historico_definitivo.empty:
-                # 🛠️ CORREÇÃO DE LÓGICA DE ORDENAÇÃO: Inverte os dados para o mais novo no topo mantendo os blocos intactos
-                df_exibir = st.session_state.historico_definitivo.iloc[::-1].reset_index(drop=True)
                 
-                # 🎨 APLICAÇÃO DE CORES PASTÉIS POR BLOCO (DATA DE REGISTRO)
+                # 🛠️ BLINDAGEM DO TIPO DE DATA NO HISTÓRICO (Isso previne o erro _check_type_compatibilities)
+                df_exibir = st.session_state.historico_definitivo.copy()
+                df_exibir["Data de Trabalho"] = pd.to_datetime(df_exibir["Data de Trabalho"], errors="coerce")
+                
+                df_exibir = df_exibir.iloc[::-1].reset_index(drop=True)
+                
+                # 🎨 APLICAÇÃO DE CORES PASTÉIS POR BLOCO
                 cores_pasteis = ['#E8F4F8', '#FFF3CD', '#D1E7DD', '#F8D7DA', '#E2E3E5', '#F3D8F4']
-                
-                # Cria o mapa de cores preservando a ordem exata dos blocos
                 unique_timestamps = df_exibir['Data de Registro'].unique()
                 map_cores = {ts: cores_pasteis[i % len(cores_pasteis)] for i, ts in enumerate(unique_timestamps)}
                 
@@ -614,7 +622,6 @@ else:
                 
                 df_estilizado = df_exibir.style.apply(colorir_fundo, axis=1)
 
-                # 🛠️ CORREÇÃO VISUAL: Configurando explicitamente TODAS as colunas para forçar a cor em 100% da linha
                 df_editated = st.data_editor(
                     df_estilizado,
                     column_config={
@@ -628,9 +635,10 @@ else:
                     use_container_width=True, hide_index=True, key="editor_historico_definitivo"
                 )
                 
-                # Somente envia pro banco de dados SE você alterar manualmente algum nome dentro da tabela
+                # Garante que, ao comparar se algo foi alterado, o Pandas não se confunda com o formato da data
+                df_editated["Data de Trabalho"] = pd.to_datetime(df_editated["Data de Trabalho"], errors="coerce")
+
                 if not df_editated.equals(df_exibir):
-                    # Como nós invertemos para exibir (iloc[::-1]), desinvertemos para salvar do jeito original
                     df_para_salvar = df_editated.iloc[::-1].reset_index(drop=True)
                     st.session_state.historico_definitivo = df_para_salvar
                     atualizar_historico_completo_db(st.session_state.user_id, df_para_salvar)
