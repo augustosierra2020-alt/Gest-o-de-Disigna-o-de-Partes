@@ -15,7 +15,6 @@ st.set_page_config(page_title="Gestão de Designações e Partes", layout="wide"
 EMAIL_ADMIN = "augustosierra2020@gmail.com"
 
 # --- 🛡️ INICIALIZAÇÃO DE MEMÓRIA (BLINDAGEM CONTRA ATTRIBUTE ERROR) ---
-# Movido para o topo para garantir que a memória exista antes de qualquer função ser executada
 if "user_id" not in st.session_state:
     st.session_state.user_id = None
 if "user_nome" not in st.session_state:
@@ -61,12 +60,10 @@ def carregar_aba(aba_nome):
                             df.columns = df.columns.str.strip().str.lower()
                             return df
                 except ValueError:
-                    # Captura erros se o Google retornar HTML em vez de JSON por instabilidade
                     pass
     except Exception:
         pass
         
-    # Fallback silencioso usando o método tradicional
     try:
         df = conn_sheets.read(worksheet=aba_nome, ttl=0)
         if df is not None and not df.empty:
@@ -87,7 +84,8 @@ def salvar_aba(df, aba_nome):
             payload = {"action": "write", "aba": aba_nome, "dados": df.to_json(orient="records")}
             response = requests.post(URL_DO_SCRIPT, json=payload, timeout=10)
             if response.status_code == 200:
-                st.cache_data.clear() # Força a renovação do cache na próxima leitura
+                # ⚡ OTIMIZAÇÃO EXTREMA: Limpa o cache APENAS da aba que foi salva, deixando o resto rápido!
+                carregar_aba.clear(aba_nome)
                 return True
     except Exception as e:
         st.error(f"Erro ao salvar na nuvem: {e}")
@@ -374,7 +372,6 @@ def gerar_escala_sem_repeticao(membros):
     ajudantes = membros.copy()
     
     tentativas = 0
-    # Validação rápida de duplas
     while tentativas < 1000:
         random.shuffle(ajudantes)
         valido = True
@@ -601,9 +598,21 @@ else:
         with aba_historico:
             st.header("📊 Seu Histórico de Atividades")
             if not st.session_state.historico_definitivo.empty:
-                df_exibir = st.session_state.historico_definitivo.sort_values(by="Data de Trabalho", ascending=False).copy()
+                # 🛠️ CORREÇÃO DE VELOCIDADE: Resetamos o índice após ordenar para o "equals" funcionar perfeitamente
+                df_exibir = st.session_state.historico_definitivo.sort_values(by="Data de Trabalho", ascending=False).reset_index(drop=True)
+                
+                # 🎨 APLICAÇÃO DE CORES PASTÉIS POR BLOCO (DATA DE REGISTRO)
+                cores_pasteis = ['#E8F4F8', '#FFF3CD', '#D1E7DD', '#F8D7DA', '#E2E3E5', '#F3D8F4']
+                map_cores = {ts: cores_pasteis[i % len(cores_pasteis)] for i, ts in enumerate(df_exibir['Data de Registro'].unique())}
+                
+                def colorir_fundo(row):
+                    cor = map_cores.get(row['Data de Registro'], '#FFFFFF')
+                    return [f'background-color: {cor}; color: #212529;'] * len(row)
+                
+                df_estilizado = df_exibir.style.apply(colorir_fundo, axis=1)
+
                 df_editated = st.data_editor(
-                    df_exibir,
+                    df_estilizado,
                     column_config={
                         "Tarefa": st.column_config.TextColumn("📝 Tarefa", required=True),
                         "Data de Trabalho": st.column_config.DateColumn("📅 Data de Trabalho", format="DD/MM/YYYY", required=True),
@@ -612,9 +621,11 @@ else:
                     use_container_width=True, hide_index=True, key="editor_historico_definitivo"
                 )
                 
-                if not df_editated.equals(st.session_state.historico_definitivo):
+                # Somente envia pro banco de dados SE você alterar manualmente algum nome dentro da tabela
+                if not df_editated.equals(df_exibir):
                     st.session_state.historico_definitivo = df_editated
-                    atualizar_historico_completo_db(st.session_state.user_id, st.session_state.historico_definitivo)
+                    atualizar_historico_completo_db(st.session_state.user_id, df_editated)
+                    st.success("Alteração manual salva na nuvem!")
                 
                 st.write("---")
                 col_nome, col_baixar, col_limpar = st.columns([2, 1, 1])
