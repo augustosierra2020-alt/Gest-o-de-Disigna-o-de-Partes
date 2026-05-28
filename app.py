@@ -8,11 +8,32 @@ from streamlit_gsheets import GSheetsConnection
 import extra_streamlit_components as stx
 import time
 
-# Configuração inicial da página web responsiva
+# --- CONFIGURAÇÃO INICIAL DA PÁGINA ---
 st.set_page_config(page_title="Gestão de Designações e Partes", layout="wide", initial_sidebar_state="expanded")
 
 # --- CONFIGURAÇÃO DE ADMINISTRADOR MASTER ---
 EMAIL_ADMIN = "augustosierra2020@gmail.com"
+
+# --- 🛡️ INICIALIZAÇÃO DE MEMÓRIA (BLINDAGEM CONTRA ATTRIBUTE ERROR) ---
+# Movido para o topo para garantir que a memória exista antes de qualquer função ser executada
+if "user_id" not in st.session_state:
+    st.session_state.user_id = None
+if "user_nome" not in st.session_state:
+    st.session_state.user_nome = None
+if "user_email" not in st.session_state:
+    st.session_state.user_email = None
+if "view_mode" not in st.session_state:
+    st.session_state.view_mode = "app" 
+if "escala_temporaria" not in st.session_state:
+    st.session_state.escala_temporaria = None
+if "deslogado" not in st.session_state:
+    st.session_state.deslogado = False
+if "historico_definitivo" not in st.session_state:
+    st.session_state.historico_definitivo = pd.DataFrame(columns=["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante", "Data de Registro"])
+if "historico_carregado" not in st.session_state:
+    st.session_state.historico_carregado = False
+if "admin_verificado" not in st.session_state:
+    st.session_state.admin_verificado = False
 
 # --- FUNÇÃO DE HORÁRIO (BRASÍLIA) ---
 def get_horario_brasilia():
@@ -21,26 +42,27 @@ def get_horario_brasilia():
 # --- CONEXÃO COM O GOOGLE SHEETS ---
 conn_sheets = st.connection("gsheets", type=GSheetsConnection)
 
-# Cache de 5 minutos para leituras. O app não vai mais na internet a cada clique!
+# 🚀 CACHE E LEITURA OTIMIZADA
 @st.cache_data(ttl=300, show_spinner=False)
 def carregar_aba(aba_nome):
     try:
         import requests
         URL_DO_SCRIPT = st.secrets["connections"]["gsheets"].get("script_url", "")
         if URL_DO_SCRIPT:
-            # Consulta em tempo real diretamente do Apps Script
             payload = {"action": "read", "aba": aba_nome}
             response = requests.post(URL_DO_SCRIPT, json=payload, timeout=10)
             if response.status_code == 200:
-                res_json = response.json()
-                if res_json.get("status") == "success":
-                    dados = res_json.get("dados", [])
-                    if dados:
-                        df = pd.DataFrame(dados)
-                        df.columns = df.columns.str.strip().str.lower()
-                        return df
-                    else:
-                        return pd.DataFrame()
+                try:
+                    res_json = response.json()
+                    if res_json.get("status") == "success":
+                        dados = res_json.get("dados", [])
+                        if dados:
+                            df = pd.DataFrame(dados)
+                            df.columns = df.columns.str.strip().str.lower()
+                            return df
+                except ValueError:
+                    # Captura erros se o Google retornar HTML em vez de JSON por instabilidade
+                    pass
     except Exception:
         pass
         
@@ -65,14 +87,13 @@ def salvar_aba(df, aba_nome):
             payload = {"action": "write", "aba": aba_nome, "dados": df.to_json(orient="records")}
             response = requests.post(URL_DO_SCRIPT, json=payload, timeout=10)
             if response.status_code == 200:
-                # Limpa o cache apenas ao salvar algo novo, forçando atualização na próxima leitura
-                st.cache_data.clear()
+                st.cache_data.clear() # Força a renovação do cache na próxima leitura
                 return True
     except Exception as e:
         st.error(f"Erro ao salvar na nuvem: {e}")
     return False
 
-# --- FUNÇÕES DE SEGURANÇA AND GERENCIAMENTO ---
+# --- FUNÇÕES DE SEGURANÇA E GERENCIAMENTO ---
 def hash_senha(senha):
     return hashlib.sha256(senha.encode()).hexdigest()
 
@@ -108,8 +129,7 @@ def inicializar_admin_master():
             df_usuarios = pd.concat([df_usuarios, admin_fixo], ignore_index=True)
             salvar_aba(df_usuarios[colunas_ordem], "usuarios")
 
-# Garante que a checagem do admin master só rode UMA vez por sessão (Evita lag de digitação)
-if "admin_verificado" not in st.session_state:
+if not st.session_state.admin_verificado:
     inicializar_admin_master()
     st.session_state.admin_verificado = True
 
@@ -194,24 +214,7 @@ def buscar_usuario_por_id(user_id):
         return user.iloc[0].to_dict()
     return None
 
-def verificar_email_existe(email):
-    df_usuarios = carregar_aba("usuarios")
-    if df_usuarios.empty or "email" not in df_usuarios.columns:
-        return False
-    df_usuarios["email"] = df_usuarios["email"].astype(str).str.strip().str.lower()
-    return not df_usuarios[df_usuarios["email"] == email.strip().lower()].empty
-
-def atualizar_senha(email, nova_senha):
-    df_usuarios = carregar_aba("usuarios")
-    if not df_usuarios.empty and "email" in df_usuarios.columns:
-        df_usuarios["email"] = df_usuarios["email"].astype(str).str.strip().str.lower()
-        idx = df_usuarios[df_usuarios["email"] == email.strip().lower()].index
-        if len(idx) > 0:
-            df_usuarios.loc[idx, "senha"] = hash_senha(nova_senha.strip())
-            salvar_aba(df_usuarios, "usuarios")
-
-# --- FUNÇÕES EXCLUSIVAS DO HISTÓRICO (PADRÃO POR BLOCOS CLOUD) ---
-
+# --- FUNÇÕES DO HISTÓRICO EM BLOCOS ---
 def acrescentar_historico_db(user_id, df_novo_bloco):
     df_global = carregar_aba("historico")
     novos_registros = []
@@ -284,7 +287,7 @@ def carregar_historico_db(user_id):
     df_user["Data de Trabalho"] = pd.to_datetime(df_user["Data de Trabalho"]).dt.date
     return df_user[["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante", "Data de Registro"]]
 
-# --- FUNÇÕES EXCLUSIVAS DO ADMIN (PAINEL GOOGLE SHEETS) ---
+# --- FUNÇÕES EXCLUSIVAS DO ADMIN ---
 def listar_todos_usuarios():
     df_usuarios = carregar_aba("usuarios")
     if df_usuarios.empty:
@@ -349,7 +352,6 @@ def salvar_grupos_db(user_id, grupos_dict):
             df_usuarios.loc[idx, "grupos_json"] = json.dumps(grupos_dict)
             salvar_aba(df_usuarios, "usuarios")
 
-# --- POP-UP DE AUTENTICAÇÃO DO ADMIN ---
 @st.dialog("🔒 Autenticação Restrita")
 def pop_up_senha_adm():
     st.write("Por favor, insira a Senha do ADM para acessar o painel administrativo.")
@@ -362,16 +364,18 @@ def pop_up_senha_adm():
         else:
             st.error("Senha incorreta! Acesso negado.")
 
-# --- FUNÇÃO DE GERAÇÃO ALEATÓRIA ---
+# --- 🚀 FUNÇÃO DE GERAÇÃO ALEATÓRIA OTIMIZADA ---
 def gerar_escala_sem_repeticao(membros):
     if len(membros) < 2:
         return None
+        
     principais = membros.copy()
     random.shuffle(principais)
     ajudantes = membros.copy()
     
     tentativas = 0
-    while tentatives < 1000:
+    # Validação rápida de duplas
+    while tentativas < 1000:
         random.shuffle(ajudantes)
         valido = True
         for p, a in zip(principais, ajudantes):
@@ -389,31 +393,11 @@ def gerar_escala_sem_repeticao(membros):
             "Ajudante": a,
             "Data de Trabalho": datetime.today().date()
         })
-    random.shuffle(scale_data)
     return pd.DataFrame(scale_data)
 
-# --- GERENCIAMENTO DE SESSÃO E COOKIES ---
+# --- GERENCIAMENTO DE COOKIES E LOGIN ---
 cookie_manager = stx.CookieManager(key="gerenciador_cookies")
 
-# 🔒 CORREÇÃO CRUCIAL: Inicialização preventiva das variáveis de sessão para evitar o AttributeError
-if "user_id" not in st.session_state:
-    st.session_state.user_id = None
-if "user_nome" not in st.session_state:
-    st.session_state.user_nome = None
-if "user_email" not in st.session_state:
-    st.session_state.user_email = None
-if "view_mode" not in st.session_state:
-    st.session_state.view_mode = "app" 
-if "escala_temporaria" not in st.session_state:
-    st.session_state.escala_temporaria = None
-if "deslogado" not in st.session_state:
-    st.session_state.deslogado = False
-if "historico_definitivo" not in st.session_state:
-    st.session_state.historico_definitivo = pd.DataFrame(columns=["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante", "Data de Registro"])
-if "historico_carregado" not in st.session_state:
-    st.session_state.historico_carregado = False
-
-# --- AUTO-LOGIN COOKIE ---
 cookie_user_id = cookie_manager.get(cookie="user_id")
 if cookie_user_id is not None and st.session_state.user_id is None and not st.session_state.deslogado:
     usuario = buscar_usuario_por_id(int(cookie_user_id))
@@ -426,7 +410,6 @@ if cookie_user_id is not None and st.session_state.user_id is None and not st.se
         st.session_state.historico_carregado = True
         st.rerun()
 
-# 🛡️ TRAVA DE SEGURANÇA ANTIDROP: Se o usuário estiver logado (aba persistente) mas o histórico sumir por hot-reload, força o carregamento imediato
 if st.session_state.user_id is not None and not st.session_state.historico_carregado:
     st.session_state.historico_definitivo = carregar_historico_db(st.session_state.user_id)
     st.session_state.historico_carregado = True
@@ -579,7 +562,7 @@ else:
                     if len(membros) < 2: st.error("O grupo precisa ter pelo menos 2 pessoas.")
                     else:
                         st.session_state.escala_temporaria = gerar_escala_sem_repeticao(membros)
-                        st.toast("Sugestão de duplas gerada!", icon="💡")
+                        st.toast("Sugestão de duplas gerada com sucesso!", icon="💡")
 
                 if st.session_state.escala_temporaria is not None:
                     st.write("---")
@@ -607,10 +590,8 @@ else:
                             
                             df_registro = df_registro[["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante", "Data de Registro"]]
                             
-                            # 🧱 SALVAMENTO EM BLOCOS
                             acrescentar_historico_db(st.session_state.user_id, df_registro)
                             
-                            # Atualiza a memória local da sessão atual
                             st.session_state.historico_definitivo = pd.concat([st.session_state.historico_definitivo, df_registro], ignore_index=True)
                             
                             st.session_state.escala_temporaria = None
@@ -631,7 +612,6 @@ else:
                     use_container_width=True, hide_index=True, key="editor_historico_definitivo"
                 )
                 
-                # Caso haja edição manual das células da tabela pelo usuário, ele regrava o pacote corrigido
                 if not df_editated.equals(st.session_state.historico_definitivo):
                     st.session_state.historico_definitivo = df_editated
                     atualizar_historico_completo_db(st.session_state.user_id, st.session_state.historico_definitivo)
