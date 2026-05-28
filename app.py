@@ -14,7 +14,7 @@ st.set_page_config(page_title="Gestão de Designações e Partes", layout="wide"
 # --- CONFIGURAÇÃO DE ADMINISTRADOR MASTER ---
 EMAIL_ADMIN = "augustosierra2020@gmail.com"
 
-# --- 🛡️ INICIALIZAÇÃO DE MEMÓRIA ---
+# --- 🛡️ INICIALIZAÇÃO DE MEMÓRIA (BLINDAGEM CONTRA ATTRIBUTE ERROR) ---
 if "user_id" not in st.session_state:
     st.session_state.user_id = None
 if "user_nome" not in st.session_state:
@@ -84,6 +84,7 @@ def salvar_aba(df, aba_nome):
             payload = {"action": "write", "aba": aba_nome, "dados": df.to_json(orient="records")}
             response = requests.post(URL_DO_SCRIPT, json=payload, timeout=10)
             if response.status_code == 200:
+                # Limpa o cache APENAS da aba que foi salva
                 carregar_aba.clear(aba_nome)
                 return True
     except Exception as e:
@@ -218,12 +219,13 @@ def acrescentar_historico_db(user_id, df_novo_bloco):
     proximo_id = 1 if df_global.empty or "id" not in df_global.columns else int(df_global["id"].max()) + 1
     
     for _, row in df_novo_bloco.iterrows():
+        dt_val = row['Data de Trabalho']
         novos_registros.append({
             "id": proximo_id,
             "user_id": int(user_id),
             "grupo": row['Grupo'],
             "tarefa": row['Tarefa'],
-            "data_trabalho": str(row['Data de Trabalho']),
+            "data_trabalho": dt_val.strftime("%Y-%m-%d") if pd.notna(dt_val) else "",
             "principal": row['Principal'],
             "ajudante": row['Ajudante'],
             "data_registro": row.get('Data de Registro', get_horario_brasilia())
@@ -247,12 +249,13 @@ def atualizar_historico_completo_db(user_id, df_historico_completo):
     proximo_id = 1 if df_global.empty or "id" not in df_global.columns else int(df_global["id"].max()) + 1
     
     for _, row in df_historico_completo.iterrows():
+        dt_val = row['Data de Trabalho']
         novos_registros.append({
             "id": proximo_id,
             "user_id": int(user_id),
             "grupo": row['Grupo'],
             "tarefa": row['Tarefa'],
-            "data_trabalho": str(row['Data de Trabalho']),
+            "data_trabalho": dt_val.strftime("%Y-%m-%d") if pd.notna(dt_val) else "",
             "principal": row['Principal'],
             "ajudante": row['Ajudante'],
             "data_registro": row.get('Data de Registro', get_horario_brasilia())
@@ -282,8 +285,8 @@ def carregar_historico_db(user_id):
         "principal": "Principal", "ajudante": "Ajudante", "data_registro": "Data de Registro"
     })
     
-    # FORÇA a conversão imediata para Data oficial ao baixar da nuvem
-    df_user["Data de Trabalho"] = pd.to_datetime(df_user["Data de Trabalho"], errors="coerce").dt.date
+    # FORÇA a conversão para Timestamp purista (Evita o erro de StreamlitAPIException)
+    df_user["Data de Trabalho"] = pd.to_datetime(df_user["Data de Trabalho"], errors="coerce")
     return df_user[["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante", "Data de Registro"]]
 
 # --- FUNÇÕES EXCLUSIVAS DO ADMIN ---
@@ -388,8 +391,7 @@ def gerar_escala_sem_repeticao(membros):
         scale_data.append({
             "Principal": p,
             "Ajudante": a,
-            # Mantém como objeto datetime para que o Pandas processe como 100% nativo de dados temporais
-            "Data de Trabalho": datetime.today()
+            "Data de Trabalho": datetime.today() # Mantido como objeto datetime nativo
         })
     return pd.DataFrame(scale_data)
 
@@ -457,7 +459,7 @@ if st.session_state.user_id is None:
                 elif resultado == "email_duplicado":
                     st.error("⚠️ Este email já está cadastrado.")
                 elif resultado == "nome_duplicado":
-                    st.error("⚠️ Este nome já está in uso.")
+                    st.error("⚠️ Este nome já está em uso.")
                 else:
                     st.error("Erro técnico de comunicação com o Google. Tente novamente.")
             else:
@@ -566,8 +568,8 @@ else:
                     st.write("---")
                     st.subheader("✍️ 2. Área Editável: Ajuste, Adicione ou Remova Duplas")
                     
-                    # 🛠️ BLINDAGEM DO TIPO DE DATA NO GERADOR
                     df_temp = st.session_state.escala_temporaria.copy()
+                    # 🛠️ BLINDAGEM DE DATA: Força a transformação para o formato PyArrow nativo do Streamlit
                     df_temp["Data de Trabalho"] = pd.to_datetime(df_temp["Data de Trabalho"], errors="coerce")
                     
                     escala_editada = st.data_editor(
@@ -588,7 +590,8 @@ else:
                         else:
                             df_registro["Grupo"] = grupo_selecionado
                             df_registro["Tarefa"] = tarefa_nome
-                            df_registro["Data de Trabalho"] = pd.to_datetime(df_registro["Data de Trabalho"]).dt.date
+                            # Para manter compatibilidade na nuvem de forma padronizada
+                            df_registro["Data de Trabalho"] = pd.to_datetime(df_registro["Data de Trabalho"], errors="coerce")
                             df_registro["Data de Registro"] = get_horario_brasilia()
                             
                             df_registro = df_registro[["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante", "Data de Registro"]]
@@ -596,7 +599,6 @@ else:
                             acrescentar_historico_db(st.session_state.user_id, df_registro)
                             
                             st.session_state.historico_definitivo = pd.concat([st.session_state.historico_definitivo, df_registro], ignore_index=True)
-                            
                             st.session_state.escala_temporaria = None
                             st.success("Escala salva com sucesso na nuvem por blocos!")
                             st.rerun()
@@ -605,14 +607,14 @@ else:
             st.header("📊 Seu Histórico de Atividades")
             if not st.session_state.historico_definitivo.empty:
                 
-                # 🛠️ BLINDAGEM DO TIPO DE DATA NO HISTÓRICO (Isso previne o erro _check_type_compatibilities)
                 df_exibir = st.session_state.historico_definitivo.copy()
+                # 🛠️ BLINDAGEM DE DATA: Força a transformação para o formato PyArrow nativo (Corrige o StreamlitAPIException)
                 df_exibir["Data de Trabalho"] = pd.to_datetime(df_exibir["Data de Trabalho"], errors="coerce")
                 
                 df_exibir = df_exibir.iloc[::-1].reset_index(drop=True)
                 
-                # 🎨 APLICAÇÃO DE CORES PASTÉIS POR BLOCO
                 cores_pasteis = ['#E8F4F8', '#FFF3CD', '#D1E7DD', '#F8D7DA', '#E2E3E5', '#F3D8F4']
+                
                 unique_timestamps = df_exibir['Data de Registro'].unique()
                 map_cores = {ts: cores_pasteis[i % len(cores_pasteis)] for i, ts in enumerate(unique_timestamps)}
                 
@@ -635,7 +637,7 @@ else:
                     use_container_width=True, hide_index=True, key="editor_historico_definitivo"
                 )
                 
-                # Garante que, ao comparar se algo foi alterado, o Pandas não se confunda com o formato da data
+                # Previne que o sistema trave na hora de comparar o original com o editado
                 df_editated["Data de Trabalho"] = pd.to_datetime(df_editated["Data de Trabalho"], errors="coerce")
 
                 if not df_editated.equals(df_exibir):
