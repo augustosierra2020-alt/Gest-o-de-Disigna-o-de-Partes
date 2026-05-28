@@ -6,7 +6,6 @@ import json
 import hashlib
 from streamlit_gsheets import GSheetsConnection
 import extra_streamlit_components as stx
-import time
 
 # --- CONFIGURAÇÃO INICIAL DA PÁGINA ---
 st.set_page_config(page_title="Gestão de Designações e Partes", layout="wide", initial_sidebar_state="expanded")
@@ -14,7 +13,34 @@ st.set_page_config(page_title="Gestão de Designações e Partes", layout="wide"
 # --- CONFIGURAÇÃO DE ADMINISTRADOR MASTER ---
 EMAIL_ADMIN = "augustosierra2020@gmail.com"
 
-# --- 🛡️ INICIALIZAÇÃO DE MEMÓRIA (BLINDAGEM CONTRA ATTRIBUTE ERROR) ---
+# --- 🛡️ FUNÇÃO ESCUDO DE DADOS (AGORA BLINDADA PARA TABELAS VAZIAS) ---
+def normalizar_tabela(df):
+    """Garante que os tipos de dados sejam puros e exatos, evitando falhas do Streamlit"""
+    if df is None or df.empty:
+        # Se estiver vazio, força a criação com os tipos de dados EXATOS que o Streamlit exige
+        return pd.DataFrame({
+            "Grupo": pd.Series(dtype="string"),
+            "Tarefa": pd.Series(dtype="string"),
+            "Data de Trabalho": pd.Series(dtype="datetime64[ns]"),
+            "Principal": pd.Series(dtype="string"),
+            "Ajudante": pd.Series(dtype="string"),
+            "Data de Registro": pd.Series(dtype="string")
+        })
+    
+    df = df.copy()
+    # Converte e garante que valores nulos não quebrem o calendário
+    df["Data de Trabalho"] = pd.to_datetime(df["Data de Trabalho"], errors="coerce")
+    df["Data de Trabalho"] = df["Data de Trabalho"].fillna(pd.Timestamp("today").normalize())
+    
+    # Limpa as colunas de texto
+    colunas_texto = ["Grupo", "Tarefa", "Principal", "Ajudante", "Data de Registro"]
+    for col in colunas_texto:
+        if col in df.columns:
+            df[col] = df[col].astype(str).replace(["nan", "NaN", "NaT", "None"], "")
+            
+    return df
+
+# --- 🛡️ INICIALIZAÇÃO DE MEMÓRIA ---
 if "user_id" not in st.session_state:
     st.session_state.user_id = None
 if "user_nome" not in st.session_state:
@@ -28,7 +54,7 @@ if "escala_temporaria" not in st.session_state:
 if "deslogado" not in st.session_state:
     st.session_state.deslogado = False
 if "historico_definitivo" not in st.session_state:
-    st.session_state.historico_definitivo = pd.DataFrame(columns=["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante", "Data de Registro"])
+    st.session_state.historico_definitivo = normalizar_tabela(pd.DataFrame())
 if "historico_carregado" not in st.session_state:
     st.session_state.historico_carregado = False
 if "admin_verificado" not in st.session_state:
@@ -81,10 +107,9 @@ def salvar_aba(df, aba_nome):
         if URL_DO_SCRIPT:
             if "id" in df.columns:
                 df["id"] = pd.to_numeric(df["id"], errors='coerce').fillna(0).astype(int)
-            payload = {"action": "write", "aba": aba_nome, "dados": df.to_json(orient="records")}
+            payload = {"action": "write", "aba": aba_nome, "dados": df.to_json(orient="records", date_format="iso")}
             response = requests.post(URL_DO_SCRIPT, json=payload, timeout=10)
             if response.status_code == 200:
-                # Limpa o cache APENAS da aba que foi salva
                 carregar_aba.clear(aba_nome)
                 return True
     except Exception as e:
@@ -274,20 +299,18 @@ def atualizar_historico_completo_db(user_id, df_historico_completo):
 def carregar_historico_db(user_id):
     df_global = carregar_aba("historico")
     if df_global.empty or "user_id" not in df_global.columns:
-        return pd.DataFrame(columns=["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante", "Data de Registro"])
+        return normalizar_tabela(pd.DataFrame())
         
     df_user = df_global[df_global["user_id"] == int(user_id)].copy()
     if df_user.empty:
-        return pd.DataFrame(columns=["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante", "Data de Registro"])
+        return normalizar_tabela(pd.DataFrame())
         
     df_user = df_user.rename(columns={
         "grupo": "Grupo", "tarefa": "Tarefa", "data_trabalho": "Data de Trabalho",
         "principal": "Principal", "ajudante": "Ajudante", "data_registro": "Data de Registro"
     })
     
-    # FORÇA a conversão para Timestamp purista (Evita o erro de StreamlitAPIException)
-    df_user["Data de Trabalho"] = pd.to_datetime(df_user["Data de Trabalho"], errors="coerce")
-    return df_user[["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante", "Data de Registro"]]
+    return normalizar_tabela(df_user[["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante", "Data de Registro"]])
 
 # --- FUNÇÕES EXCLUSIVAS DO ADMIN ---
 def listar_todos_usuarios():
@@ -391,7 +414,7 @@ def gerar_escala_sem_repeticao(membros):
         scale_data.append({
             "Principal": p,
             "Ajudante": a,
-            "Data de Trabalho": datetime.today() # Mantido como objeto datetime nativo
+            "Data de Trabalho": pd.Timestamp("today").normalize() 
         })
     return pd.DataFrame(scale_data)
 
@@ -490,7 +513,7 @@ else:
             st.session_state.user_nome = None
             st.session_state.user_email = None
             st.session_state.historico_carregado = False
-            st.session_state.historico_definitivo = pd.DataFrame(columns=["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante", "Data de Registro"])
+            st.session_state.historico_definitivo = normalizar_tabela(pd.DataFrame())
             st.rerun()
 
     # --- PAINEL ADMINISTRADOR ---
@@ -561,25 +584,20 @@ else:
                     membros = st.session_state.grupos[grupo_selecionado]
                     if len(membros) < 2: st.error("O grupo precisa ter pelo menos 2 pessoas.")
                     else:
-                        st.session_state.escala_temporaria = gerar_escala_sem_repeticao(membros)
+                        st.session_state.escala_temporaria = normalizar_tabela(gerar_escala_sem_repeticao(membros))
                         st.toast("Sugestão de duplas gerada com sucesso!", icon="💡")
 
                 if st.session_state.escala_temporaria is not None:
                     st.write("---")
                     st.subheader("✍️ 2. Área Editável: Ajuste, Adicione ou Remova Duplas")
                     
-                    df_temp = st.session_state.escala_temporaria.copy()
-                    # 🛠️ BLINDAGEM DE DATA: Força a transformação para o formato PyArrow nativo do Streamlit
-                    df_temp["Data de Trabalho"] = pd.to_datetime(df_temp["Data de Trabalho"], errors="coerce")
-                    
                     escala_editada = st.data_editor(
-                        df_temp,
+                        st.session_state.escala_temporaria,
                         column_config={
                             "Principal": st.column_config.TextColumn("🧑‍✈️ Principal (Líder)", required=True),
                             "Ajudante": st.column_config.TextColumn("🧑‍🔧 Ajudante", required=True),
-                            "Data de Trabalho": st.column_config.DateColumn(
-                                "📅 Data de Trabalho", min_value=datetime(2026, 1, 1).date(), format="DD/MM/YYYY", required=True
-                            )
+                            # Removido o min_value para evitar conflitos de bloqueio
+                            "Data de Trabalho": st.column_config.DateColumn("📅 Data de Trabalho", format="DD/MM/YYYY", required=True)
                         },
                         num_rows="dynamic", hide_index=True, use_container_width=True
                     )
@@ -590,15 +608,13 @@ else:
                         else:
                             df_registro["Grupo"] = grupo_selecionado
                             df_registro["Tarefa"] = tarefa_nome
-                            # Para manter compatibilidade na nuvem de forma padronizada
-                            df_registro["Data de Trabalho"] = pd.to_datetime(df_registro["Data de Trabalho"], errors="coerce")
                             df_registro["Data de Registro"] = get_horario_brasilia()
                             
-                            df_registro = df_registro[["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante", "Data de Registro"]]
+                            df_registro = normalizar_tabela(df_registro[["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante", "Data de Registro"]])
                             
                             acrescentar_historico_db(st.session_state.user_id, df_registro)
                             
-                            st.session_state.historico_definitivo = pd.concat([st.session_state.historico_definitivo, df_registro], ignore_index=True)
+                            st.session_state.historico_definitivo = normalizar_tabela(pd.concat([st.session_state.historico_definitivo, df_registro], ignore_index=True))
                             st.session_state.escala_temporaria = None
                             st.success("Escala salva com sucesso na nuvem por blocos!")
                             st.rerun()
@@ -607,14 +623,9 @@ else:
             st.header("📊 Seu Histórico de Atividades")
             if not st.session_state.historico_definitivo.empty:
                 
-                df_exibir = st.session_state.historico_definitivo.copy()
-                # 🛠️ BLINDAGEM DE DATA: Força a transformação para o formato PyArrow nativo (Corrige o StreamlitAPIException)
-                df_exibir["Data de Trabalho"] = pd.to_datetime(df_exibir["Data de Trabalho"], errors="coerce")
-                
-                df_exibir = df_exibir.iloc[::-1].reset_index(drop=True)
+                df_exibir = normalizar_tabela(st.session_state.historico_definitivo).iloc[::-1].reset_index(drop=True)
                 
                 cores_pasteis = ['#E8F4F8', '#FFF3CD', '#D1E7DD', '#F8D7DA', '#E2E3E5', '#F3D8F4']
-                
                 unique_timestamps = df_exibir['Data de Registro'].unique()
                 map_cores = {ts: cores_pasteis[i % len(cores_pasteis)] for i, ts in enumerate(unique_timestamps)}
                 
@@ -629,6 +640,7 @@ else:
                     column_config={
                         "Grupo": st.column_config.TextColumn("🗂️ Grupo", required=True),
                         "Tarefa": st.column_config.TextColumn("📝 Tarefa", required=True),
+                        # Removido o min_value para aceitar qualquer data que venha do servidor
                         "Data de Trabalho": st.column_config.DateColumn("📅 Data de Trabalho", format="DD/MM/YYYY", required=True),
                         "Principal": st.column_config.TextColumn("🧑‍✈️ Principal", required=True),
                         "Ajudante": st.column_config.TextColumn("🧑‍🔧 Ajudante", required=True),
@@ -637,12 +649,12 @@ else:
                     use_container_width=True, hide_index=True, key="editor_historico_definitivo"
                 )
                 
-                # Previne que o sistema trave na hora de comparar o original com o editado
-                df_editated["Data de Trabalho"] = pd.to_datetime(df_editated["Data de Trabalho"], errors="coerce")
+                df_editated_seguro = normalizar_tabela(df_editated)
+                df_exibir_seguro = normalizar_tabela(df_exibir)
 
-                if not df_editated.equals(df_exibir):
-                    df_para_salvar = df_editated.iloc[::-1].reset_index(drop=True)
-                    st.session_state.historico_definitivo = df_para_salvar
+                if not df_editated_seguro.equals(df_exibir_seguro):
+                    df_para_salvar = df_editated_seguro.iloc[::-1].reset_index(drop=True)
+                    st.session_state.historico_definitivo = normalizar_tabela(df_para_salvar)
                     atualizar_historico_completo_db(st.session_state.user_id, df_para_salvar)
                     st.success("Alteração manual salva na nuvem!")
                 
@@ -656,7 +668,7 @@ else:
                 with col_limpar:
                     st.write(""); st.write("")
                     if st.button("🗑️ Limpar Todo o Histórico", use_container_width=True):
-                        st.session_state.historico_definitivo = pd.DataFrame(columns=["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante", "Data de Registro"])
+                        st.session_state.historico_definitivo = normalizar_tabela(pd.DataFrame(columns=["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante", "Data de Registro"]))
                         atualizar_historico_completo_db(st.session_state.user_id, st.session_state.historico_definitivo)
                         st.rerun()
             else: st.info("Nenhum registro confirmado.")
