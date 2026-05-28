@@ -13,11 +13,10 @@ st.set_page_config(page_title="Gestão de Designações e Partes", layout="wide"
 # --- CONFIGURAÇÃO DE ADMINISTRADOR MASTER ---
 EMAIL_ADMIN = "augustosierra2020@gmail.com"
 
-# --- 🛡️ FUNÇÃO ESCUDO DE DADOS (AGORA BLINDADA PARA TABELAS VAZIAS) ---
+# --- 🛡️ FUNÇÃO ESCUDO DE DADOS (AGORA COMPATÍVEL COM DATAS BRASILEIRAS) ---
 def normalizar_tabela(df):
     """Garante que os tipos de dados sejam puros e exatos, evitando falhas do Streamlit"""
     if df is None or df.empty:
-        # Se estiver vazio, força a criação com os tipos de dados EXATOS que o Streamlit exige
         return pd.DataFrame({
             "Grupo": pd.Series(dtype="string"),
             "Tarefa": pd.Series(dtype="string"),
@@ -28,8 +27,8 @@ def normalizar_tabela(df):
         })
     
     df = df.copy()
-    # Converte e garante que valores nulos não quebrem o calendário
-    df["Data de Trabalho"] = pd.to_datetime(df["Data de Trabalho"], errors="coerce")
+    # Converte forçando o padrão de dia primeiro (DD/MM/YYYY) para não bugar as datas
+    df["Data de Trabalho"] = pd.to_datetime(df["Data de Trabalho"], dayfirst=True, errors="coerce")
     df["Data de Trabalho"] = df["Data de Trabalho"].fillna(pd.Timestamp("today").normalize())
     
     # Limpa as colunas de texto
@@ -591,12 +590,12 @@ else:
                     st.write("---")
                     st.subheader("✍️ 2. Área Editável: Ajuste, Adicione ou Remova Duplas")
                     
+                    # No gerador, mantemos o DateColumn nativo para a conveniência do calendário
                     escala_editada = st.data_editor(
                         st.session_state.escala_temporaria,
                         column_config={
                             "Principal": st.column_config.TextColumn("🧑‍✈️ Principal (Líder)", required=True),
                             "Ajudante": st.column_config.TextColumn("🧑‍🔧 Ajudante", required=True),
-                            # Removido o min_value para evitar conflitos de bloqueio
                             "Data de Trabalho": st.column_config.DateColumn("📅 Data de Trabalho", format="DD/MM/YYYY", required=True)
                         },
                         num_rows="dynamic", hide_index=True, use_container_width=True
@@ -625,6 +624,10 @@ else:
                 
                 df_exibir = normalizar_tabela(st.session_state.historico_definitivo).iloc[::-1].reset_index(drop=True)
                 
+                # 🚀 OTIMIZAÇÃO DE COR: Formata a data como texto ANTES de pintar a tabela
+                # Isso impede o Streamlit de sobrescrever nossa cor com o widget do calendário
+                df_exibir["Data de Trabalho"] = df_exibir["Data de Trabalho"].dt.strftime("%d/%m/%Y")
+                
                 cores_pasteis = ['#E8F4F8', '#FFF3CD', '#D1E7DD', '#F8D7DA', '#E2E3E5', '#F3D8F4']
                 unique_timestamps = df_exibir['Data de Registro'].unique()
                 map_cores = {ts: cores_pasteis[i % len(cores_pasteis)] for i, ts in enumerate(unique_timestamps)}
@@ -640,8 +643,8 @@ else:
                     column_config={
                         "Grupo": st.column_config.TextColumn("🗂️ Grupo", required=True),
                         "Tarefa": st.column_config.TextColumn("📝 Tarefa", required=True),
-                        # Removido o min_value para aceitar qualquer data que venha do servidor
-                        "Data de Trabalho": st.column_config.DateColumn("📅 Data de Trabalho", format="DD/MM/YYYY", required=True),
+                        # Agora tratada como texto comum para respeitar a cor CSS de ponta a ponta
+                        "Data de Trabalho": st.column_config.TextColumn("📅 Data (DD/MM/AAAA)", required=True),
                         "Principal": st.column_config.TextColumn("🧑‍✈️ Principal", required=True),
                         "Ajudante": st.column_config.TextColumn("🧑‍🔧 Ajudante", required=True),
                         "Data de Registro": st.column_config.TextColumn("🕰️ Salvo Em", disabled=True)
