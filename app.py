@@ -13,7 +13,7 @@ st.set_page_config(page_title="Gestão de Designações e Partes", layout="wide"
 # --- CONFIGURAÇÃO DE ADMINISTRADOR MASTER ---
 EMAIL_ADMIN = "augustosierra2020@gmail.com"
 
-# --- 🛡️ FUNÇÃO ESCUDO DE DADOS (AGORA COMPATÍVEL COM DATAS BRASILEIRAS) ---
+# --- 🛡️ FUNÇÃO ESCUDO DE DADOS ---
 def normalizar_tabela(df):
     """Garante que os tipos de dados sejam puros e exatos, evitando falhas do Streamlit"""
     if df is None or df.empty:
@@ -27,11 +27,9 @@ def normalizar_tabela(df):
         })
     
     df = df.copy()
-    # Converte forçando o padrão de dia primeiro (DD/MM/YYYY) para não bugar as datas
     df["Data de Trabalho"] = pd.to_datetime(df["Data de Trabalho"], dayfirst=True, errors="coerce")
     df["Data de Trabalho"] = df["Data de Trabalho"].fillna(pd.Timestamp("today").normalize())
     
-    # Limpa as colunas de texto
     colunas_texto = ["Grupo", "Tarefa", "Principal", "Ajudante", "Data de Registro"]
     for col in colunas_texto:
         if col in df.columns:
@@ -590,7 +588,6 @@ else:
                     st.write("---")
                     st.subheader("✍️ 2. Área Editável: Ajuste, Adicione ou Remova Duplas")
                     
-                    # No gerador, mantemos o DateColumn nativo para a conveniência do calendário
                     escala_editada = st.data_editor(
                         st.session_state.escala_temporaria,
                         column_config={
@@ -624,36 +621,55 @@ else:
                 
                 df_exibir = normalizar_tabela(st.session_state.historico_definitivo).iloc[::-1].reset_index(drop=True)
                 
-                # 🚀 OTIMIZAÇÃO DE COR: Formata a data como texto ANTES de pintar a tabela
-                # Isso impede o Streamlit de sobrescrever nossa cor com o widget do calendário
+                # 🚀 OTIMIZAÇÃO DE COR 1: Transforma as datas em texto antes de renderizar
                 df_exibir["Data de Trabalho"] = df_exibir["Data de Trabalho"].dt.strftime("%d/%m/%Y")
                 
+                # 🚀 OTIMIZAÇÃO DE COR 2: Renomeia as colunas no próprio Pandas
+                df_exibir = df_exibir.rename(columns={
+                    "Grupo": "🗂️ Grupo",
+                    "Tarefa": "📝 Tarefa",
+                    "Data de Trabalho": "📅 Data de Trabalho",
+                    "Principal": "🧑‍✈️ Principal",
+                    "Ajudante": "🧑‍🔧 Ajudante",
+                    "Data de Registro": "🕰️ Salvo Em"
+                })
+                
                 cores_pasteis = ['#E8F4F8', '#FFF3CD', '#D1E7DD', '#F8D7DA', '#E2E3E5', '#F3D8F4']
-                unique_timestamps = df_exibir['Data de Registro'].unique()
+                unique_timestamps = df_exibir['🕰️ Salvo Em'].unique()
                 map_cores = {ts: cores_pasteis[i % len(cores_pasteis)] for i, ts in enumerate(unique_timestamps)}
                 
                 def colorir_fundo(row):
-                    cor = map_cores.get(row['Data de Registro'], '#FFFFFF')
+                    cor = map_cores.get(row['🕰️ Salvo Em'], '#FFFFFF')
                     return [f'background-color: {cor}; color: #212529;'] * len(row)
                 
                 df_estilizado = df_exibir.style.apply(colorir_fundo, axis=1)
 
+                # 🚀 OTIMIZAÇÃO DE COR 3: Usa apenas regras leves no Streamlit para não apagar a cor
                 df_editated = st.data_editor(
                     df_estilizado,
                     column_config={
-                        "Grupo": st.column_config.TextColumn("🗂️ Grupo", required=True),
-                        "Tarefa": st.column_config.TextColumn("📝 Tarefa", required=True),
-                        # Agora tratada como texto comum para respeitar a cor CSS de ponta a ponta
-                        "Data de Trabalho": st.column_config.TextColumn("📅 Data (DD/MM/AAAA)", required=True),
-                        "Principal": st.column_config.TextColumn("🧑‍✈️ Principal", required=True),
-                        "Ajudante": st.column_config.TextColumn("🧑‍🔧 Ajudante", required=True),
-                        "Data de Registro": st.column_config.TextColumn("🕰️ Salvo Em", disabled=True)
+                        "🗂️ Grupo": st.column_config.Column(required=True),
+                        "📝 Tarefa": st.column_config.Column(required=True),
+                        "📅 Data de Trabalho": st.column_config.Column(required=True),
+                        "🧑‍✈️ Principal": st.column_config.Column(required=True),
+                        "🧑‍🔧 Ajudante": st.column_config.Column(required=True),
+                        "🕰️ Salvo Em": st.column_config.Column(disabled=True)
                     },
                     use_container_width=True, hide_index=True, key="editor_historico_definitivo"
                 )
                 
-                df_editated_seguro = normalizar_tabela(df_editated)
-                df_exibir_seguro = normalizar_tabela(df_exibir)
+                # Renomeia de volta para o padrão original que a nuvem aceita
+                df_editated_db = df_editated.rename(columns={
+                    "🗂️ Grupo": "Grupo", "📝 Tarefa": "Tarefa", "📅 Data de Trabalho": "Data de Trabalho",
+                    "🧑‍✈️ Principal": "Principal", "🧑‍🔧 Ajudante": "Ajudante", "🕰️ Salvo Em": "Data de Registro"
+                })
+                df_exibir_db = df_exibir.rename(columns={
+                    "🗂️ Grupo": "Grupo", "📝 Tarefa": "Tarefa", "📅 Data de Trabalho": "Data de Trabalho",
+                    "🧑‍✈️ Principal": "Principal", "🧑‍🔧 Ajudante": "Ajudante", "🕰️ Salvo Em": "Data de Registro"
+                })
+
+                df_editated_seguro = normalizar_tabela(df_editated_db)
+                df_exibir_seguro = normalizar_tabela(df_exibir_db)
 
                 if not df_editated_seguro.equals(df_exibir_seguro):
                     df_para_salvar = df_editated_seguro.iloc[::-1].reset_index(drop=True)
