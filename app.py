@@ -212,7 +212,6 @@ def atualizar_senha(email, nova_senha):
 
 # --- FUNÇÕES EXCLUSIVAS DO HISTÓRICO (PADRÃO POR BLOCOS CLOUD) ---
 
-# 🧱 FUNÇÃO A: Apenas acrescenta o novo bloco gerado no final do arquivo global (Mantém a ordem cronológica intacta)
 def acrescentar_historico_db(user_id, df_novo_bloco):
     df_global = carregar_aba("historico")
     novos_registros = []
@@ -239,7 +238,6 @@ def acrescentar_historico_db(user_id, df_novo_bloco):
             df_global = pd.concat([df_global, df_novos], ignore_index=True)
         salvar_aba(df_global, "historico")
 
-# 📝 FUNÇÃO B: Executada APENAS em caso de edição manual da tabela ou exclusão total do histórico do usuário
 def atualizar_historico_completo_db(user_id, df_historico_completo):
     df_global = carregar_aba("historico")
     if not df_global.empty and "user_id" in df_global.columns:
@@ -368,12 +366,12 @@ def pop_up_senha_adm():
 def gerar_escala_sem_repeticao(membros):
     if len(membros) < 2:
         return None
-    principais = miembros = membros.copy()
+    principais = membros.copy()
     random.shuffle(principais)
     ajudantes = membros.copy()
     
     tentativas = 0
-    while tentativas < 1000:
+    while tentatives < 1000:
         random.shuffle(ajudantes)
         valido = True
         for p, a in zip(principais, ajudantes):
@@ -397,6 +395,7 @@ def gerar_escala_sem_repeticao(membros):
 # --- GERENCIAMENTO DE SESSÃO E COOKIES ---
 cookie_manager = stx.CookieManager(key="gerenciador_cookies")
 
+# 🔒 CORREÇÃO CRUCIAL: Inicialização preventiva das variáveis de sessão para evitar o AttributeError
 if "user_id" not in st.session_state:
     st.session_state.user_id = None
 if "user_nome" not in st.session_state:
@@ -409,6 +408,10 @@ if "escala_temporaria" not in st.session_state:
     st.session_state.escala_temporaria = None
 if "deslogado" not in st.session_state:
     st.session_state.deslogado = False
+if "historico_definitivo" not in st.session_state:
+    st.session_state.historico_definitivo = pd.DataFrame(columns=["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante", "Data de Registro"])
+if "historico_carregado" not in st.session_state:
+    st.session_state.historico_carregado = False
 
 # --- AUTO-LOGIN COOKIE ---
 cookie_user_id = cookie_manager.get(cookie="user_id")
@@ -420,7 +423,13 @@ if cookie_user_id is not None and st.session_state.user_id is None and not st.se
         st.session_state.user_email = usuario["email"]
         st.session_state.grupos = json.loads(usuario["grupos_json"]) if usuario["grupos_json"] else {}
         st.session_state.historico_definitivo = carregar_historico_db(st.session_state.user_id)
+        st.session_state.historico_carregado = True
         st.rerun()
+
+# 🛡️ TRAVA DE SEGURANÇA ANTIDROP: Se o usuário estiver logado (aba persistente) mas o histórico sumir por hot-reload, força o carregamento imediato
+if st.session_state.user_id is not None and not st.session_state.historico_carregado:
+    st.session_state.historico_definitivo = carregar_historico_db(st.session_state.user_id)
+    st.session_state.historico_carregado = True
 
 # --- INTERFACE: TELA DESLOGADO ---
 if st.session_state.user_id is None:
@@ -443,6 +452,7 @@ if st.session_state.user_id is None:
                 st.session_state.user_email = usuario["email"]
                 st.session_state.grupos = json.loads(usuario["grupos_json"]) if usuario["grupos_json"] else {}
                 st.session_state.historico_definitivo = carregar_historico_db(st.session_state.user_id)
+                st.session_state.historico_carregado = True
                 st.session_state.deslogado = False 
                 
                 if manter_logado:
@@ -496,6 +506,8 @@ else:
             st.session_state.user_id = None
             st.session_state.user_nome = None
             st.session_state.user_email = None
+            st.session_state.historico_carregado = False
+            st.session_state.historico_definitivo = pd.DataFrame(columns=["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante", "Data de Registro"])
             st.rerun()
 
     # --- PAINEL ADMINISTRADOR ---
@@ -595,7 +607,7 @@ else:
                             
                             df_registro = df_registro[["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante", "Data de Registro"]]
                             
-                            # 🧱 SALVAMENTO EM BLOCOS: Envia somente o bloco novo gerado mantendo o passado intocado
+                            # 🧱 SALVAMENTO EM BLOCOS
                             acrescentar_historico_db(st.session_state.user_id, df_registro)
                             
                             # Atualiza a memória local da sessão atual
