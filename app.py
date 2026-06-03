@@ -634,7 +634,8 @@ else:
                 
                 def colorir_fundo(row):
                     cor = map_cores.get(row['🕰️ Salvo Em'], '#FFFFFF')
-                    return [f'background-color: {cor}'] * len(row)
+                    # 🎨 CORRIGIDO: Adicionado 'color: #000000;' e 'font-weight' para garantir visibilidade
+                    return [f'background-color: {cor}; color: #000000; font-weight: 500;'] * len(row)
                 
                 # 🚀 O SEGREDO 1: Esconder o index de forma nativa no Pandas (Dribla o bug do Streamlit)
                 try:
