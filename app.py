@@ -13,7 +13,14 @@ st.set_page_config(page_title="Gestão de Designações e Partes", layout="wide"
 # --- CONFIGURAÇÃO DE ADMINISTRADOR MASTER ---
 EMAIL_ADMIN = "augustosierra2020@gmail.com"
 
-# --- 🛡️ FUNÇÃO ESCUDO DE DADOS ---
+# --- 🛡️ FUNÇÕES DE BLINDAGEM (PROGRAMAÇÃO DEFENSIVA) ---
+def formatar_data_segura(serie_datas):
+    """Amortecedor global para datas: Tenta converter e formatar de forma segura."""
+    try:
+        return pd.to_datetime(serie_datas, dayfirst=True, errors="coerce").dt.strftime("%d/%m/%Y").fillna("")
+    except Exception:
+        return serie_datas.astype(str)
+
 def normalizar_tabela(df):
     """Garante que os tipos de dados sejam puros e exatos, evitando falhas do Streamlit"""
     if df is None or df.empty:
@@ -27,13 +34,17 @@ def normalizar_tabela(df):
         })
     
     df = df.copy()
-    df["Data de Trabalho"] = pd.to_datetime(df["Data de Trabalho"], dayfirst=True, errors="coerce")
-    df["Data de Trabalho"] = df["Data de Trabalho"].fillna(pd.Timestamp("today").normalize())
+    
+    try:
+        df["Data de Trabalho"] = pd.to_datetime(df["Data de Trabalho"], dayfirst=True, errors="coerce")
+        df["Data de Trabalho"] = df["Data de Trabalho"].fillna(pd.Timestamp("today").normalize())
+    except Exception:
+        pass 
     
     colunas_texto = ["Grupo", "Tarefa", "Principal", "Ajudante", "Data de Registro"]
     for col in colunas_texto:
         if col in df.columns:
-            df[col] = df[col].astype(str).replace(["nan", "NaN", "NaT", "None"], "")
+            df[col] = df[col].astype(str).replace(["nan", "NaN", "NaT", "None", "<NA>"], "")
             
     return df
 
@@ -64,7 +75,7 @@ def get_horario_brasilia():
 # --- CONEXÃO COM O GOOGLE SHEETS ---
 conn_sheets = st.connection("gsheets", type=GSheetsConnection)
 
-# 🚀 CACHE E LEITURA OTIMIZADA
+# 🚀 CACHE E LEITURA OTIMIZADA COM BLINDAGEM
 @st.cache_data(ttl=300, show_spinner=False)
 def carregar_aba(aba_nome):
     try:
@@ -242,15 +253,21 @@ def acrescentar_historico_db(user_id, df_novo_bloco):
     
     for _, row in df_novo_bloco.iterrows():
         dt_val = row['Data de Trabalho']
+        if isinstance(dt_val, pd.Timestamp) or isinstance(dt_val, datetime):
+            data_str = dt_val.strftime("%Y-%m-%d")
+        else:
+            try: data_str = pd.to_datetime(dt_val, dayfirst=True).strftime("%Y-%m-%d")
+            except: data_str = str(dt_val)
+
         novos_registros.append({
             "id": proximo_id,
             "user_id": int(user_id),
-            "grupo": row['Grupo'],
-            "tarefa": row['Tarefa'],
-            "data_trabalho": dt_val.strftime("%Y-%m-%d") if pd.notna(dt_val) else "",
-            "principal": row['Principal'],
-            "ajudante": row['Ajudante'],
-            "data_registro": row.get('Data de Registro', get_horario_brasilia())
+            "grupo": str(row.get('Grupo', '')),
+            "tarefa": str(row.get('Tarefa', '')),
+            "data_trabalho": data_str,
+            "principal": str(row.get('Principal', '')),
+            "ajudante": str(row.get('Ajudante', '')),
+            "data_registro": str(row.get('Data de Registro', get_horario_brasilia()))
         })
         proximo_id += 1
         
@@ -272,15 +289,21 @@ def atualizar_historico_completo_db(user_id, df_historico_completo):
     
     for _, row in df_historico_completo.iterrows():
         dt_val = row['Data de Trabalho']
+        if isinstance(dt_val, pd.Timestamp) or isinstance(dt_val, datetime):
+            data_str = dt_val.strftime("%Y-%m-%d")
+        else:
+            try: data_str = pd.to_datetime(dt_val, dayfirst=True).strftime("%Y-%m-%d")
+            except: data_str = str(dt_val)
+
         novos_registros.append({
             "id": proximo_id,
             "user_id": int(user_id),
-            "grupo": row['Grupo'],
-            "tarefa": row['Tarefa'],
-            "data_trabalho": dt_val.strftime("%Y-%m-%d") if pd.notna(dt_val) else "",
-            "principal": row['Principal'],
-            "ajudante": row['Ajudante'],
-            "data_registro": row.get('Data de Registro', get_horario_brasilia())
+            "grupo": str(row.get('Grupo', '')),
+            "tarefa": str(row.get('Tarefa', '')),
+            "data_trabalho": data_str,
+            "principal": str(row.get('Principal', '')),
+            "ajudante": str(row.get('Ajudante', '')),
+            "data_registro": str(row.get('Data de Registro', get_horario_brasilia()))
         })
         proximo_id += 1
         
@@ -415,9 +438,21 @@ def gerar_escala_sem_repeticao(membros):
         })
     return pd.DataFrame(scale_data)
 
-# --- GERENCIAMENTO DE COOKIES E LOGIN ---
+# --- 🚀 GERENCIAMENTO DE COOKIES E LOGIN COM AGENDAMENTO ---
 cookie_manager = stx.CookieManager(key="gerenciador_cookies")
 
+# 1. PROCESSA SALVAMENTO DE COOKIE AGENDADO (Dribla o bug do st.rerun)
+if "set_cookie_now" in st.session_state:
+    uid = st.session_state.pop("set_cookie_now")
+    validade = datetime.now() + timedelta(days=30)
+    cookie_manager.set("user_id", str(uid), expires_at=validade)
+
+# 2. PROCESSA EXCLUSÃO DE COOKIE AGENDADA
+if "delete_cookie_now" in st.session_state:
+    st.session_state.pop("delete_cookie_now")
+    cookie_manager.delete("user_id")
+
+# 3. VERIFICA SE O USUÁRIO JÁ TEM COOKIE SALVO PARA LOGIN AUTOMÁTICO
 cookie_user_id = cookie_manager.get(cookie="user_id")
 if cookie_user_id is not None and st.session_state.user_id is None and not st.session_state.deslogado:
     usuario = buscar_usuario_por_id(int(cookie_user_id))
@@ -459,8 +494,9 @@ if st.session_state.user_id is None:
                 st.session_state.deslogado = False 
                 
                 if manter_logado:
-                    validade = datetime.now() + timedelta(days=30)
-                    cookie_manager.set("user_id", str(usuario["id"]), expires_at=validade)
+                    # 💡 AQUI ESTÁ A MÁGICA: Agendamos o cookie para a próxima renderização da página!
+                    st.session_state.set_cookie_now = usuario["id"]
+                    
                 st.rerun()
             else:
                 st.error("Email ou senha incorretos.")
@@ -503,8 +539,8 @@ else:
             st.write("---")
             
         if st.button("🚪 Sair (Logout)", use_container_width=True):
-            try: cookie_manager.delete("user_id")
-            except KeyError: pass
+            # 💡 Agendando a exclusão do cookie com segurança
+            st.session_state.delete_cookie_now = True
             st.session_state.deslogado = True
             st.session_state.user_id = None
             st.session_state.user_nome = None
@@ -619,9 +655,11 @@ else:
             st.header("📊 Seu Histórico de Atividades")
             if not st.session_state.historico_definitivo.empty:
                 
-                # --- MODO LEITURA (100% COLORIDO E LIVRE DO BUG DO STREAMLIT) ---
+                # --- MODO LEITURA (BLINDADO COM DEFENSIVE PROGRAMMING) ---
                 df_exibir = normalizar_tabela(st.session_state.historico_definitivo).iloc[::-1].reset_index(drop=True)
-                df_exibir["Data de Trabalho"] = df_exibir["Data de Trabalho"].dt.strftime("%d/%m/%Y")
+                
+                # Aplica a função de blindagem para evitar o AttributeError do .dt
+                df_exibir["Data de Trabalho"] = formatar_data_segura(df_exibir["Data de Trabalho"])
                 
                 df_exibir_visual = df_exibir.rename(columns={
                     "Grupo": "🗂️ Grupo", "Tarefa": "📝 Tarefa", "Data de Trabalho": "📅 Data de Trabalho",
@@ -634,19 +672,16 @@ else:
                 
                 def colorir_fundo(row):
                     cor = map_cores.get(row['🕰️ Salvo Em'], '#FFFFFF')
-                    # 🎨 CORRIGIDO: Adicionado 'color: #000000;' e 'font-weight' para garantir visibilidade
                     return [f'background-color: {cor}; color: #000000; font-weight: 500;'] * len(row)
                 
-                # 🚀 O SEGREDO 1: Esconder o index de forma nativa no Pandas (Dribla o bug do Streamlit)
                 try:
                     df_estilizado = df_exibir_visual.style.apply(colorir_fundo, axis=1).hide(axis="index")
                 except AttributeError:
                     df_estilizado = df_exibir_visual.style.apply(colorir_fundo, axis=1).hide_index()
 
-                # 🚀 O SEGREDO 2: Não passamos hide_index=True no comando abaixo!
                 st.dataframe(df_estilizado, use_container_width=True)
                 
-                # --- MODO EDIÇÃO AVANÇADA (Mantido caso queira corrigir algo) ---
+                # --- MODO EDIÇÃO AVANÇADA ---
                 with st.expander("🛠️ Ativar Modo de Edição Manual (Painel Branco)"):
                     st.info("💡 Como a tabela acima foi blindada para aceitar as cores, use este painel se precisar alterar dados manualmente.")
                     
