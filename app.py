@@ -40,6 +40,9 @@ def normalizar_tabela(df):
         df["Data de Trabalho"] = df["Data de Trabalho"].fillna(pd.Timestamp("today").normalize())
     except Exception:
         pass 
+        
+    if "🔒 Cadeado" in df.columns:
+        df["🔒 Cadeado"] = df["🔒 Cadeado"].astype(bool)
     
     colunas_texto = ["Grupo", "Tarefa", "Principal", "Ajudante", "Data de Registro"]
     for col in colunas_texto:
@@ -410,6 +413,7 @@ def pop_up_senha_adm():
             st.error("Senha incorreta! Acesso negado.")
 
 def gerar_escala_sem_repeticao(membros):
+    """Gera uma escala de duplas adicionando automaticamente a coluna de cadeado"""
     if len(membros) < 2:
         return None
         
@@ -432,6 +436,7 @@ def gerar_escala_sem_repeticao(membros):
     scale_data = []
     for p, a in zip(principais, ajudantes):
         scale_data.append({
+            "🔒 Cadeado": False,
             "Principal": p,
             "Ajudante": a,
             "Data de Trabalho": pd.Timestamp("today").normalize() 
@@ -441,18 +446,15 @@ def gerar_escala_sem_repeticao(membros):
 # --- 🚀 GERENCIAMENTO DE COOKIES E LOGIN COM AGENDAMENTO ---
 cookie_manager = stx.CookieManager(key="gerenciador_cookies")
 
-# 1. PROCESSA SALVAMENTO DE COOKIE AGENDADO (Dribla o bug do st.rerun)
 if "set_cookie_now" in st.session_state:
     uid = st.session_state.pop("set_cookie_now")
     validade = datetime.now() + timedelta(days=30)
     cookie_manager.set("user_id", str(uid), expires_at=validade)
 
-# 2. PROCESSA EXCLUSÃO DE COOKIE AGENDADA
 if "delete_cookie_now" in st.session_state:
     st.session_state.pop("delete_cookie_now")
     cookie_manager.delete("user_id")
 
-# 3. VERIFICA SE O USUÁRIO JÁ TEM COOKIE SALVO PARA LOGIN AUTOMÁTICO
 cookie_user_id = cookie_manager.get(cookie="user_id")
 if cookie_user_id is not None and st.session_state.user_id is None and not st.session_state.deslogado:
     usuario = buscar_usuario_por_id(int(cookie_user_id))
@@ -494,7 +496,6 @@ if st.session_state.user_id is None:
                 st.session_state.deslogado = False 
                 
                 if manter_logado:
-                    # 💡 AQUI ESTÁ A MÁGICA: Agendamos o cookie para a próxima renderização da página!
                     st.session_state.set_cookie_now = usuario["id"]
                     
                 st.rerun()
@@ -539,7 +540,6 @@ else:
             st.write("---")
             
         if st.button("🚪 Sair (Logout)", use_container_width=True):
-            # 💡 Agendando a exclusão do cookie com segurança
             st.session_state.delete_cookie_now = True
             st.session_state.deslogado = True
             st.session_state.user_id = None
@@ -612,21 +612,36 @@ else:
                 col1, col2 = st.columns([1, 1])
                 with col1: grupo_selecionado = st.selectbox("Selecione o Grupo:", list(st.session_state.grupos.keys()))
                 with col2: tarefa_nome = st.text_input("Nome da Atividade:", value="Coordenação do Evento")
+                
+                # --- NOVA FUNÇÃO: CADEAR NOMES (Ausências) ---
+                st.markdown("##### 🚫 Restrições do Sorteio (Cadear Nomes)")
+                membros_do_grupo = st.session_state.grupos[grupo_selecionado]
+                nomes_excluidos = st.multiselect(
+                    "Selecione as pessoas que NÃO participarão desta escala (Férias, Falta, etc.):", 
+                    options=membros_do_grupo,
+                    help="Os nomes selecionados aqui não serão incluídos nas duplas sorteadas."
+                )
+                
+                # Filtra o grupo mantendo apenas os nomes que não foram bloqueados
+                membros_validos = [m for m in membros_do_grupo if m not in nomes_excluidos]
                     
-                if st.button("🔄 Gerar Sugestão de Duplas", type="primary", use_container_width=True):
-                    membros = st.session_state.grupos[grupo_selecionado]
-                    if len(membros) < 2: st.error("O grupo precisa ter pelo menos 2 pessoas.")
+                if st.button("🔄 Gerar Nova Escala", type="primary", use_container_width=True):
+                    if len(membros_validos) < 2: 
+                        st.error("O grupo precisa ter pelo menos 2 pessoas disponíveis para gerar duplas.")
                     else:
-                        st.session_state.escala_temporaria = normalizar_tabela(gerar_escala_sem_repeticao(membros))
-                        st.toast("Sugestão de duplas gerada com sucesso!", icon="💡")
+                        st.session_state.escala_temporaria = normalizar_tabela(gerar_escala_sem_repeticao(membros_validos))
+                        st.toast("Escala gerada com sucesso!", icon="💡")
 
                 if st.session_state.escala_temporaria is not None:
                     st.write("---")
-                    st.subheader("✍️ 2. Área Editável: Ajuste, Adicione ou Remova Duplas")
+                    st.subheader("✍️ 2. Área Editável: Ajuste, Adicione ou Cadeie Duplas")
+                    st.info("💡 **Dica:** Marque a caixinha **'🔒 Cadeado'** nas duplas que ficaram perfeitas. Depois, use o botão **'Re-sortear'** abaixo da tabela para embaralhar apenas as duplas que não estão protegidas!")
                     
+                    # --- TABELA COM CADEAR DUPLAS ---
                     escala_editada = st.data_editor(
                         st.session_state.escala_temporaria,
                         column_config={
+                            "🔒 Cadeado": st.column_config.CheckboxColumn("🔒 Cadeado", help="Trava esta dupla para não ser alterada no re-sorteio", default=False),
                             "Principal": st.column_config.TextColumn("🧑‍✈️ Principal (Líder)", required=True),
                             "Ajudante": st.column_config.TextColumn("🧑‍🔧 Ajudante", required=True),
                             "Data de Trabalho": st.column_config.DateColumn("📅 Data de Trabalho", format="DD/MM/YYYY", required=True)
@@ -634,21 +649,85 @@ else:
                         num_rows="dynamic", hide_index=True, use_container_width=True
                     )
                     
-                    if st.button("💾 Confirmar e Registrar no Histórico", type="secondary", use_container_width=True):
-                        df_registro = escala_editada.dropna(subset=["Principal", "Ajudante"]).copy()
-                        if df_registro.empty: st.warning("A tabela está vazia.")
-                        else:
-                            df_registro["Grupo"] = grupo_selecionado
-                            df_registro["Tarefa"] = tarefa_nome
-                            df_registro["Data de Registro"] = get_horario_brasilia()
+                    # Salva edição no estado caso o usuário clique em algum botão
+                    st.session_state.escala_temporaria = escala_editada.copy()
+                    
+                    st.write("---")
+                    st.markdown("##### 🛠️ Ações da Escala")
+                    col_save, col_resort, col_clear = st.columns([2, 2, 1])
+                    
+                    with col_save:
+                        if st.button("💾 Confirmar e Registrar no Histórico", type="primary", use_container_width=True):
+                            # Remove o cadeado (que é só pro rascunho) antes de mandar pro histórico
+                            df_registro = escala_editada.drop(columns=["🔒 Cadeado"], errors="ignore").dropna(subset=["Principal", "Ajudante"]).copy()
+                            if df_registro.empty: st.warning("A tabela está vazia.")
+                            else:
+                                df_registro["Grupo"] = grupo_selecionado
+                                df_registro["Tarefa"] = tarefa_nome
+                                df_registro["Data de Registro"] = get_horario_brasilia()
+                                
+                                df_registro = normalizar_tabela(df_registro[["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante", "Data de Registro"]])
+                                
+                                acrescentar_historico_db(st.session_state.user_id, df_registro)
+                                
+                                st.session_state.historico_definitivo = normalizar_tabela(pd.concat([st.session_state.historico_definitivo, df_registro], ignore_index=True))
+                                st.session_state.escala_temporaria = None
+                                st.success("Escala salva com sucesso na nuvem por blocos!")
+                                st.rerun()
+                                
+                    with col_resort:
+                        # --- NOVA FUNÇÃO: RE-SORTEAR COM TRAVAS ---
+                        if st.button("🔀 Re-sortear Duplas Destravadas", type="secondary", use_container_width=True):
+                            # Separa quem foi bloqueado manualmente
+                            df_travados = escala_editada[escala_editada["🔒 Cadeado"] == True].copy()
                             
-                            df_registro = normalizar_tabela(df_registro[["Grupo", "Tarefa", "Data de Trabalho", "Principal", "Ajudante", "Data de Registro"]])
+                            principais_travados = df_travados["Principal"].tolist()
+                            ajudantes_travados = df_travados["Ajudante"].tolist()
                             
-                            acrescentar_historico_db(st.session_state.user_id, df_registro)
+                            # Calcula quem sobrou do grupo (excluindo os nomes ausentes e os que já estão nas travas)
+                            principais_livres = [m for m in membros_validos if m not in principais_travados]
+                            ajudantes_livres = [m for m in membros_validos if m not in ajudantes_travados]
                             
-                            st.session_state.historico_definitivo = normalizar_tabela(pd.concat([st.session_state.historico_definitivo, df_registro], ignore_index=True))
+                            if len(principais_livres) == 0 and len(ajudantes_livres) == 0:
+                                st.warning("⚠️ Todas as duplas estão cadeadas. Não há o que re-sortear.")
+                            elif len(principais_livres) == 0 or len(ajudantes_livres) == 0:
+                                st.warning("⚠️ Desequilíbrio nos cadeados. Impossível gerar pares com precisão.")
+                            else:
+                                # Embaraça os nomes que sobraram
+                                random.shuffle(principais_livres)
+                                tentativas = 0
+                                valido = True
+                                while tentativas < 1000:
+                                    random.shuffle(ajudantes_livres)
+                                    valido = True
+                                    for p, a in zip(principais_livres, ajudantes_livres):
+                                        if p == a: # Evita que a pessoa faça dupla com ela mesma
+                                            valido = False
+                                            break
+                                    if valido:
+                                        break
+                                    tentativas += 1
+                                    
+                                if not valido:
+                                    st.toast("⚠️ Algumas duplas novas podem ter nomes repetidos porque você isolou nomes iguais nos cadeados.", icon="⚠️")
+
+                                novas_linhas = []
+                                for p, a in zip(principais_livres, ajudantes_livres):
+                                    novas_linhas.append({
+                                        "🔒 Cadeado": False,
+                                        "Principal": p,
+                                        "Ajudante": a,
+                                        "Data de Trabalho": pd.Timestamp("today").normalize()
+                                    })
+                                    
+                                df_novos = pd.DataFrame(novas_linhas)
+                                df_final = pd.concat([df_travados, df_novos], ignore_index=True)
+                                st.session_state.escala_temporaria = df_final
+                                st.rerun()
+
+                    with col_clear:
+                        if st.button("🗑️ Descartar Escala", use_container_width=True):
                             st.session_state.escala_temporaria = None
-                            st.success("Escala salva com sucesso na nuvem por blocos!")
                             st.rerun()
 
         with aba_historico:
@@ -658,7 +737,6 @@ else:
                 # --- MODO LEITURA (BLINDADO COM DEFENSIVE PROGRAMMING) ---
                 df_exibir = normalizar_tabela(st.session_state.historico_definitivo).iloc[::-1].reset_index(drop=True)
                 
-                # Aplica a função de blindagem para evitar o AttributeError do .dt
                 df_exibir["Data de Trabalho"] = formatar_data_segura(df_exibir["Data de Trabalho"])
                 
                 df_exibir_visual = df_exibir.rename(columns={
