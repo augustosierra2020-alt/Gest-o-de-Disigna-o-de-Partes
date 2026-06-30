@@ -180,12 +180,31 @@ def buscar_logo_montadora_automatica(montadora):
 
 def obter_image_base64_html(caminho):
     try:
-        extensao = caminho.split('.')[-1].lower()
-        mime = "image/jpeg" if extensao in ['jpg', 'jpeg'] else f"image/{extensao}"
-        with open(caminho, "rb") as image_file:
-            encoded = base64.b64encode(image_file.read()).decode()
-            return f"data:{mime};base64,{encoded}"
-    except: return ""
+        # SISTEMA FORÇADO PARA REMOVER O FUNDO BRANCO DE TODAS AS LOGOS
+        img = Image.open(caminho).convert("RGBA")
+        dados = img.getdata()
+        novos_dados = []
+        for item in dados:
+            # Tolerância alta para remover brancos e cinzas clarinhos
+            if item[0] >= 235 and item[1] >= 235 and item[2] >= 235:
+                novos_dados.append((255, 255, 255, 0))
+            else:
+                novos_dados.append(item)
+        img.putdata(novos_dados)
+        
+        buffered = io.BytesIO()
+        img.save(buffered, format="PNG")
+        encoded = base64.b64encode(buffered.getvalue()).decode()
+        return f"data:image/png;base64,{encoded}"
+    except Exception:
+        # Fallback de segurança se a IA de imagem falhar
+        try:
+            extensao = caminho.split('.')[-1].lower()
+            mime = "image/jpeg" if extensao in ['jpg', 'jpeg'] else f"image/{extensao}"
+            with open(caminho, "rb") as image_file:
+                encoded = base64.b64encode(image_file.read()).decode()
+                return f"data:{mime};base64,{encoded}"
+        except: return ""
 
 # ==========================================
 # 4. ROTINAS OBD-II DE ALTA PERFORMANCE (RAG)
@@ -524,7 +543,8 @@ st.markdown("""
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        min-height: 220px;
+        height: 160px; /* BEM MAIS COMPACTO AGORA */
+        box-sizing: border-box; 
         color: white;
         border-radius: 20px;
         box-shadow: 0 8px 16px rgba(0,0,0,0.2);
@@ -544,8 +564,7 @@ st.markdown("""
         box-shadow: 0 12px 24px rgba(0,0,0,0.4);
     }
     
-    .big-hub-btn h2 { color: white !important; margin: 10px 0 !important; font-weight: bold; font-size: 1.5rem;}
-    .big-hub-btn p { color: #E3F2FD !important; font-size: 1rem !important; margin: 0;}
+    .big-hub-btn h2 { color: white !important; margin: 10px 0 0 0 !important; font-weight: bold; font-size: 1.5rem;}
     .big-hub-btn span { font-size: 2.5rem; }
 
     /* -----------------------------------------------------------
@@ -659,7 +678,6 @@ montadoras_existentes = listar_montadoras()
 # ==========================================
 if st.session_state.app_mode == "HOME":
     
-    # MUDANÇA: Renderiza a Logo Principal no topo da Tela Inicial (HOME)
     caminho_logo = os.path.join(LOGOS_DIR, "logo.png")
     if os.path.exists(caminho_logo):
         col_logo1, col_logo2, col_logo3 = st.columns([1, 2, 1])
@@ -680,7 +698,6 @@ if st.session_state.app_mode == "HOME":
                 <div class="big-hub-btn btn-blue">
                     <span>⚙️</span>
                     <h2>Gráficos EEPROM</h2>
-                    <p>Banco de dados, mapas hexadecimais e escalas.</p>
                 </div>
             </a>
         """, unsafe_allow_html=True)
@@ -691,7 +708,6 @@ if st.session_state.app_mode == "HOME":
                 <div class="big-hub-btn btn-red">
                     <span>🚗</span>
                     <h2>Códigos de Falha</h2>
-                    <p>Diagnóstico IA e Busca de falhas cruzadas.</p>
                 </div>
             </a>
         """, unsafe_allow_html=True)
@@ -702,7 +718,6 @@ if st.session_state.app_mode == "HOME":
                 <div class="big-hub-btn btn-green">
                     <span>📊</span>
                     <h2>Gestão & OS</h2>
-                    <p>Processamento e emissão de Ordem de Serviço.</p>
                 </div>
             </a>
         """, unsafe_allow_html=True)
@@ -765,8 +780,6 @@ elif st.session_state.app_mode == "EEPROM":
                         if caminho_logo:
                             logo_html_src = obter_image_base64_html(caminho_logo)
                             if logo_html_src:
-                                # SOLUÇÃO DE LOGOS: Fundo cinza clarinho (#F4F6F9) e sombra na imagem (drop-shadow)!
-                                # Isso resolve o problema de contraste com logos brancas puras e logos pretas!
                                 st.markdown(f"""
                                     <div style="display: flex; justify-content: center; align-items: center; 
                                                 background-color: #F4F6F9; padding: 10px; border-radius: 8px; 
