@@ -150,18 +150,6 @@ st.set_page_config(page_title="HyperTork System Hub", page_icon="⚙️", layout
 # ==========================================
 # 3. ROTINAS AUXILIARES DE IMAGEM (LOGOS)
 # ==========================================
-def aplicar_fundo_transparente(caminho_img):
-    img = Image.open(caminho_img).convert("RGBA")
-    dados = img.getdata()
-    novos_dados = []
-    for item in dados:
-        if item[0] >= 240 and item[1] >= 240 and item[2] >= 240:
-            novos_dados.append((255, 255, 255, 0))
-        else:
-            novos_dados.append(item)
-    img.putdata(novos_dados)
-    return img
-
 def buscar_logo_montadora_automatica(montadora):
     if os.path.exists(LOGOS_DIR):
         arquivos = os.listdir(LOGOS_DIR)
@@ -180,31 +168,13 @@ def buscar_logo_montadora_automatica(montadora):
 
 def obter_image_base64_html(caminho):
     try:
-        # SISTEMA FORÇADO PARA REMOVER O FUNDO BRANCO DE TODAS AS LOGOS
-        img = Image.open(caminho).convert("RGBA")
-        dados = img.getdata()
-        novos_dados = []
-        for item in dados:
-            # Tolerância alta para remover brancos e cinzas clarinhos
-            if item[0] >= 235 and item[1] >= 235 and item[2] >= 235:
-                novos_dados.append((255, 255, 255, 0))
-            else:
-                novos_dados.append(item)
-        img.putdata(novos_dados)
-        
-        buffered = io.BytesIO()
-        img.save(buffered, format="PNG")
-        encoded = base64.b64encode(buffered.getvalue()).decode()
-        return f"data:image/png;base64,{encoded}"
-    except Exception:
-        # Fallback de segurança se a IA de imagem falhar
-        try:
-            extensao = caminho.split('.')[-1].lower()
-            mime = "image/jpeg" if extensao in ['jpg', 'jpeg'] else f"image/{extensao}"
-            with open(caminho, "rb") as image_file:
-                encoded = base64.b64encode(image_file.read()).decode()
-                return f"data:{mime};base64,{encoded}"
-        except: return ""
+        # Removido o filtro de "apagar fundos brancos" que estava destruindo logos brancas
+        extensao = caminho.split('.')[-1].lower()
+        mime = "image/png" if extensao == 'png' else ("image/jpeg" if extensao in ['jpg', 'jpeg'] else f"image/{extensao}")
+        with open(caminho, "rb") as image_file:
+            encoded = base64.b64encode(image_file.read()).decode()
+            return f"data:{mime};base64,{encoded}"
+    except: return ""
 
 # ==========================================
 # 4. ROTINAS OBD-II DE ALTA PERFORMANCE (RAG)
@@ -543,7 +513,8 @@ st.markdown("""
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        height: 160px; /* BEM MAIS COMPACTO AGORA */
+        padding: 30px 10px; /* ALINHAMENTO DINÂMICO: Espaçamento ajustável em vez de altura fixa dura */
+        gap: 12px;
         box-sizing: border-box; 
         color: white;
         border-radius: 20px;
@@ -551,7 +522,6 @@ st.markdown("""
         cursor: pointer;
         transition: transform 0.2s, box-shadow 0.2s;
         text-align: center;
-        padding: 20px;
         margin-bottom: 20px;
     }
     
@@ -564,8 +534,8 @@ st.markdown("""
         box-shadow: 0 12px 24px rgba(0,0,0,0.4);
     }
     
-    .big-hub-btn h2 { color: white !important; margin: 10px 0 0 0 !important; font-weight: bold; font-size: 1.5rem;}
-    .big-hub-btn span { font-size: 2.5rem; }
+    .big-hub-btn h2 { color: white !important; margin: 0 !important; font-weight: bold; font-size: 1.3rem; line-height: 1.2;}
+    .big-hub-btn span { font-size: 2rem; line-height: 1;}
 
     /* -----------------------------------------------------------
        ESTILIZAÇÃO DO CHIP (BOTÃO LARANJA FLUTUANTE)
@@ -683,10 +653,9 @@ if st.session_state.app_mode == "HOME":
         col_logo1, col_logo2, col_logo3 = st.columns([1, 2, 1])
         with col_logo2:
             try:
-                logo_tratada = aplicar_fundo_transparente(caminho_logo)
-                st.image(logo_tratada, use_container_width=True)
-            except Exception:
                 st.image(caminho_logo, use_container_width=True)
+            except Exception:
+                pass
         st.markdown("---")
 
     st.markdown("<h1 style='text-align: center; margin-bottom: 50px;'>HyperTork System Hub</h1>", unsafe_allow_html=True)
